@@ -1,0 +1,6 @@
+[project]
+name = "lgm-glaciers"
+version = "0.1.0"
+description = "Compute and view Last Glacial Maximum glaciers in 3D"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pillow", "h5py"]

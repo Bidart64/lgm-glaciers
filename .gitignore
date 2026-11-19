@@ -1,0 +1,5 @@
+data/
+web/data/
+web/config.js
+.venv/
+__pycache__/

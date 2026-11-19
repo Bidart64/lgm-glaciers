@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LGM Glaciers</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="config.js"></script>
+  <style>
+    body { margin: 0; font: 14px system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+    #panel { position: absolute; top: 12px; left: 12px; padding: 10px 14px; border-radius: 8px;
+             background: rgba(20, 24, 32, .8); color: #eee; max-width: 260px; }
+    #panel h1 { font-size: 16px; margin: 0 0 6px; }
+    #panel select { width: 100%; margin: 4px 0 8px; }
+    #panel small { color: #aab; line-height: 1.5; }
+    #panel label { display: block; margin-top: 8px; cursor: pointer; }
+    .key { display: inline-block; width: 14px; height: 0; border-top: 2px dashed #ff5a7a; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="panel">
+    <h1>Last Glacial Maximum</h1>
+    <select id="region"></select>
+    <small id="info"></small>
+    <label><input type="checkbox" id="mapped"> <span class="key"></span> Mapped LGM extent</label>
+    <small>Field evidence: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers)</small>
+  </div>
+  <script>
+    // Present-day 30 m elevation (Terrarium encoding) that the computed ice surface is draped onto.
+    const TERRARIUM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
+    const SIZE = 256
+    // Ice near a margin is no thicker than a perfectly plastic ice sheet: H = sqrt(2 τ d / (ρ g)), τ = 100 kPa.
+    const PLASTIC = Math.sqrt(2 * 100e3 / (917 * 9.81))
+
+    let regions = []  // { ...meta, s, d, shelf }: model grids, finest last so it wins where regions overlap
+    const ready = fetch('data/regions.json').then(r => r.json())
+      .then(async list => { regions = await Promise.all(list.map(loadRegion)) })
+
+    async function decode(url) {
+      const img = await createImageBitmap(await (await fetch(url)).blob(),
+                                          { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
+      const ctx = new OffscreenCanvas(img.width, img.height).getContext('2d', { willReadFrequently: true })
+      ctx.drawImage(img, 0, 0)
+      return ctx.getImageData(0, 0, img.width, img.height).data
+    }
+
+    async function loadRegion(meta) {
+      const px = await decode(`data/${meta.name}.png`)
+      const n = meta.nx * meta.ny, s = new Float32Array(n), d = new Float32Array(n), shelf = new Uint8Array(n)
+      for (let i = 0; i < n; i++) {
+        s[i] = px[4 * i] * 256 + px[4 * i + 1] - 10000
+        d[i] = ((px[4 * i + 2] & 127) - 64) / 4 * meta.dx  // signed distance to the ice margin (m)
+        shelf[i] = px[4 * i + 2] >> 7
+      }
+      return { ...meta, s, d, shelf, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
+    }
+
+    // Spherical Lambert azimuthal equal-area, matching glaciers/dem.py.
+    function laea(r, lon, lat) {
+      const lam = lon * Math.PI / 180 - r.lam0, phi = lat * Math.PI / 180
+      const k = Math.sqrt(2 / (1 + Math.sin(r.phi0) * Math.sin(phi) + Math.cos(r.phi0) * Math.cos(phi) * Math.cos(lam)))
+      return [6371000 * k * Math.cos(phi) * Math.sin(lam),
+              6371000 * k * (Math.cos(r.phi0) * Math.sin(phi) - Math.sin(r.phi0) * Math.cos(phi) * Math.cos(lam))]
+    }
+
+    // Bilinear sample of every region at one point: { s, d, shelf }. Finer regions win, blended in over
+    // 10 cells from their edge so there is no seam where they meet a coarser one.
+    function sampleIce(lon, lat) {
+      let out = null
+      for (const r of regions) {
+        const [x, y] = laea(r, lon, lat)
+        const fx = (x - r.x0) / r.dx, fy = (r.y1 - y) / r.dx
+        if (fx < 0 || fy < 0 || fx >= r.nx - 1 || fy >= r.ny - 1) continue
+        const i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j, k = j * r.nx + i
+        const w = [(1 - u) * (1 - v), u * (1 - v), (1 - u) * v, u * v], ks = [k, k + 1, k + r.nx, k + r.nx + 1]
+        const mix = a => w[0] * a[ks[0]] + w[1] * a[ks[1]] + w[2] * a[ks[2]] + w[3] * a[ks[3]]
+        const m = { s: mix(r.s), d: mix(r.d), shelf: mix(r.shelf) }
+        const t = Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10
+        out = !out || t >= 1 ? m : { s: out.s + t * (m.s - out.s), d: out.d + t * (m.d - out.d), shelf: out.shelf + t * (m.shelf - out.shelf) }
+      }
+      return out
+    }
+
+    // One tile of glacial-world data: present elevation, plus ice surface and shelf flag where modelled.
+    const cache = new Map()
+    function glacialTile(z, x, y) {
+      const key = `${z}/${x}/${y}`
+      if (!cache.has(key)) {
+        if (cache.size > 300) cache.delete(cache.keys().next().value)
+        cache.set(key, ready.then(() => decode(`${TERRARIUM}/${key}.png`)).then(px => {
+          const elev = new Float32Array(SIZE * SIZE), ice = new Float32Array(SIZE * SIZE), shelf = new Uint8Array(SIZE * SIZE)
+          const n = 2 ** z
+          for (let row = 0; row < SIZE; row++) {
+            const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + (row + 0.5) / SIZE) / n))) * 180 / Math.PI
+            for (let col = 0; col < SIZE; col++) {
+              const i = row * SIZE + col, p = 4 * i
+              elev[i] = px[p] * 256 + px[p + 1] + px[p + 2] / 256 - 32768
+              const m = sampleIce((x + (col + 0.5) / SIZE) / n * 360 - 180, lat)
+              if (!m) continue
+              if (m.d > 0 && m.s > elev[i]) ice[i] = Math.min(m.s - elev[i], PLASTIC * Math.sqrt(m.d))  // buried ground
+              shelf[i] = m.shelf > 0.5
+            }
+          }
+          return { elev, ice, shelf }
+        }))
+      }
+      return cache.get(key)
+    }
+
+    async function png(rgba) {
+      const canvas = new OffscreenCanvas(SIZE, SIZE)
+      canvas.getContext('2d').putImageData(new ImageData(rgba, SIZE, SIZE), 0, 0)
+      return (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer()
+    }
+
+    // lgm://dem/... -> Terrarium tile of the glacial surface; lgm://ice/... -> ice + exposed shelf overlay.
+    maplibregl.addProtocol('lgm', async ({ url }) => {
+      const [, kind, z, x, y] = url.match(/lgm:\/\/(\w+)\/(\d+)\/(\d+)\/(\d+)/)
+      const t = await glacialTile(+z, +x, +y)
+      const rgba = new Uint8ClampedArray(SIZE * SIZE * 4)
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        const p = 4 * i
+        if (kind === 'dem') {
+          const v = Math.max(t.elev[i], 0) + t.ice[i] + 32768  // flat sea: no seafloor relief
+          rgba[p] = Math.floor(v / 256); rgba[p + 1] = Math.floor(v % 256); rgba[p + 2] = Math.floor((v % 1) * 256)
+          rgba[p + 3] = 255
+        } else if (t.ice[i] > 0) {
+          const k = Math.min(t.ice[i] / 1500, 1)  // thicker ice is bluer
+          rgba[p] = 240 - 70 * k; rgba[p + 1] = 247 - 35 * k; rgba[p + 2] = 255; rgba[p + 3] = 235
+        } else if (t.shelf[i]) {
+          rgba[p] = 205; rgba[p + 1] = 185; rgba[p + 2] = 140; rgba[p + 3] = 170
+        }
+      }
+      return { data: await png(rgba) }
+    })
+
+    const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: SIZE, encoding: 'terrarium', maxzoom: 12 }
+    const map = new maplibregl.Map({
+      container: 'map', center: [10.5, 46.2], zoom: 7, pitch: 65, maxPitch: 80, hash: true,  // URL keeps the view
+      style: {
+        version: 8,
+        sources: {
+          satellite: { type: 'raster', tileSize: 256, maxzoom: 19,
+                       tiles: [`https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${window.MAPBOX_TOKEN}`],
+                       attribution: '© Mapbox © Maxar · Terrain: Mapzen/AWS · Bedrock: ETOPO 2022 · Climate: WorldClim, PMIP4' },
+          ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: SIZE, maxzoom: 12 },
+          terrain: dem, shade: dem,
+        },
+        layers: [
+          { id: 'satellite', type: 'raster', source: 'satellite' },
+          { id: 'ice', type: 'raster', source: 'ice', paint: { 'raster-resampling': 'linear' } },
+          { id: 'shade', type: 'hillshade', source: 'shade',
+            paint: { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#1d2a3a' } },
+        ],
+        terrain: { source: 'terrain', exaggeration: 1.4 },
+        sky: { 'sky-color': '#8db4dc', 'horizon-color': '#dfe9f3', 'fog-color': '#dfe9f3', 'horizon-fog-blend': 0.6 },
+      },
+    })
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }))
+
+    function show(r, fly = true) {
+      if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 65, padding: 40, duration: 2500 })
+      document.getElementById('info').innerHTML =
+        `PMIP4 LGM climate${r.dT ? ` ${r.dT > 0 ? '+' : ''}${r.dT} °C` : ''} · sea level ${r.sea_level} m<br>` +
+        `Ice ${r.ice_km2.toLocaleString()} km² · up to ${r.max_ice_m.toLocaleString()} m thick<br>` +
+        (r.mapped_km2 > 0.1 * r.ice_km2  // Patagonia's ice sheet is in neither dataset
+          ? `Mapped ${r.mapped_km2.toLocaleString()} km² · overlap ${Math.round(r.iou * 100)}%<br>`
+          : 'No mapped outline in the datasets<br>') +
+        `Sand = continental shelf exposed by lower sea level`
+    }
+
+    ready.then(() => {
+      const select = document.getElementById('region')
+      select.innerHTML = regions.map((r, i) => `<option value="${i}">${r.name.replace('_', ' ')}</option>`).join('')
+      select.onchange = () => show(regions[select.value])
+      const alps = regions.findIndex(r => r.name === 'alps')
+      select.value = Math.max(alps, 0)
+      show(regions[select.value], !location.hash)
+    })
+
+    // Field-evidence outlines, fetched only when first switched on (~5 MB).
+    document.getElementById('mapped').onchange = e => {
+      if (!map.getSource('mapped')) {
+        map.addSource('mapped', { type: 'geojson', data: 'data/outlines.geojson' })
+        map.addLayer({ id: 'mapped', type: 'line', source: 'mapped',
+                       paint: { 'line-color': '#ff5a7a', 'line-dasharray': [2, 1.5],
+                                'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1, 9, 2.5] } })
+      }
+      map.setLayoutProperty('mapped', 'visibility', e.target.checked ? 'visible' : 'none')
+    }
+  </script>
+</body>
+</html>

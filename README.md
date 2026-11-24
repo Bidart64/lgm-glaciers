@@ -3,7 +3,7 @@
 Computes where glaciers and ice sheets should have been at the Last Glacial Maximum (~21,000 years ago)
 and shows them in 3D on satellite imagery.
 
-**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River Range and the Wind River Range;
+**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges;
 no account needed)
 
 ## Run
@@ -24,7 +24,9 @@ python -m glaciers north_america                # ~4 min: supplies the Cordiller
 python -m glaciers.fit idaho                    # ~25 min: fits Idaho's climate correction to the mapped ice
 python -m glaciers idaho                        # ~17 min: 500 m grid
 python -m glaciers lost_river                   # ~3 min: 200 m grid, uses Idaho's correction
-python -m glaciers.demo lost_river idaho        # standalone demo in docs/ (free map sources, GitHub Pages)
+python -m glaciers.fit sawtooth                 # ~35 min: Sawtooth Range correction at 200 m (Idaho's baseline)
+python -m glaciers sawtooth                     # ~5 min: 200 m grid
+python -m glaciers.demo                         # standalone demo in docs/ (free map sources, GitHub Pages)
 ```
 
 Wind River Range, Wyoming (no parent run needed):

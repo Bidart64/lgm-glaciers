@@ -183,11 +183,13 @@ def _prism(rows, cols):
     return d["T"], d["P"]
 
 
-def load_climate(proj, x, y, bed=None):
+def load_climate(proj, x, y, bed=None, shift=None):
     """Present-day monthly temperature (°C), precipitation (mm), their reference elevation, and the ocean mask.
 
     With `bed` (the 30" bedrock on this grid), PRISM's 800 m normals replace WorldClim inside the contiguous US.
     They resolve mountain snowfall that WorldClim's 18 km cells smear into the valleys.
+    Also returns the monthly PRISM-minus-WorldClim shift that was removed (None without PRISM); pass `shift`
+    to reuse one, e.g. the shift a borrowed climate correction was fitted with.
     """
     lon, lat = proj.inverse(*np.meshgrid(x, y))
     rc = [(90 - lat) * 6 - 0.5, (lon + 180) * 6 - 0.5]
@@ -208,8 +210,9 @@ def load_climate(proj, x, y, bed=None):
             # PRISM is fitted to an 800 m DEM; the 30" bedrock matches it on land.
             # Shift its 1991-2020 temperatures to WorldClim's 1970-2000 baseline, month by month (regional
             # sea-level means), so the LGM anomalies and calibrations apply unchanged.
-            shift = ((pt + LAPSE * bed) - (T + LAPSE * z_ref))[:, ok].mean(1)
-            print(f"PRISM minus WorldClim baseline: {shift.mean():+.2f} K (removed)")
+            if shift is None:
+                shift = ((pt + LAPSE * bed) - (T + LAPSE * z_ref))[:, ok].mean(1)
+            print(f"PRISM minus WorldClim baseline: {np.mean(shift):+.2f} K (removed)")
             T = np.where(ok, pt - shift[:, None, None], T)
             P, z_ref = np.where(ok, pp, P), np.where(ok, bed, z_ref)
-    return T, P, z_ref, ocean
+    return T, P, z_ref, ocean, shift

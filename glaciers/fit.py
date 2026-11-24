@@ -16,7 +16,8 @@ from . import model, outlines
 from .regions import correction, correction_path, setup
 
 HELD_OUT = {"idaho": {"Lemhi": (-113.60, -112.80, 44.00, 44.90), "Pioneer": (-114.25, -113.60, 43.50, 43.90)},
-            "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)}}
+            "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)},
+            "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)}}
 RADIUS = 50e3      # control points compare model and mapped ice within about this distance (m)
 GAIN = 1.0         # K of correction per e-fold of area mismatch
 MAX_STEP = 1.0     # K per iteration
@@ -24,7 +25,13 @@ LIMITS = (-4.0, 4.0)  # about the gap between climate models and glacier-based c
 SMOOTH = 0.5      # each iteration, blend half of the field with a smoothed copy (1 control point)
 MIN_ICE = 100.0   # km² of weighted ice before a control point responds; smaller patches are below the grid
 EDGE = 60e3       # ice within this distance of an inflow edge comes from outside and is not fitted (m)
-FIT_KM = {"idaho": 1.0, "wind_river": 0.5}  # fitting grid (km); the correction itself is resolution-independent
+FIT_KM = {"idaho": 1.0, "wind_river": 0.5, "sawtooth": 0.2}  # fitting grid (km); the correction itself is resolution-independent
+
+
+def save(region, lons, lats, dT, shift):
+    """The correction, plus the PRISM baseline shift it was fitted with (reused by regions that borrow it)."""
+    extra = {} if shift is None else {"shift": shift}
+    np.savez(correction_path(region), lons=lons, lats=lats, dT=dT, **extra)
 
 
 def box(lon, lat, b):
@@ -63,7 +70,7 @@ def main():
     T0, P, z_ref, ocean = r["climate"]
     H = None
     for it in range(a.iterations):
-        np.savez(correction_path(a.region), lons=lons, lats=lats, dT=dT)  # correction() reads it back
+        save(a.region, lons, lats, dT, r["prism_shift"])  # correction() reads it back
         climate = T0 + correction(a.region, lon, lat), P, z_ref, ocean
         t0 = time.time()
         H, _ = model.simulate(r["bed0"], climate, dx, 3000 if H is None else 1500, r["dt"], -120.0, r["H_edge"], H)
@@ -88,7 +95,7 @@ def main():
         print(", ".join(line), flush=True)
         if np.abs(step).max() < 0.2:
             break
-    np.savez(correction_path(a.region), lons=lons, lats=lats, dT=dT)
+    save(a.region, lons, lats, dT, r["prism_shift"])
     print(f"wrote {correction_path(a.region)}; now run: python -m glaciers {a.region}")
 
 

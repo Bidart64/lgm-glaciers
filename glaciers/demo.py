@@ -16,7 +16,7 @@ DOCS = WEB.parent / "docs"
 
 
 def main():
-    names = sys.argv[1:] or ["lost_river", "idaho", "wind_river"]
+    names = sys.argv[1:] or ["lost_river", "idaho", "wind_river", "sawtooth"]
     background = ["north_america"]  # coarse ice around the regions, so ice doesn't stop at their box edges
     metas = [json.loads((WEB / "data" / f"{r}.json").read_text()) for r in names + background]
     data = DOCS / "data"

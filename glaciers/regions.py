@@ -22,9 +22,13 @@ REGIONS = {
     "idaho":         (-114.2, 45.6, 320, 440, 0.5, 3000, 10, 0),
     "lost_river":    (-113.65, 44.05, 45, 65, 0.2, 3000, 5, 0),
     "wind_river":    (-109.55, 42.95, 75, 95, 0.2, 3000, 5, 0),
+    "sawtooth":      (-114.95, 44.10, 40, 50, 0.2, 3000, 5, 0),
 }
 # Regions that reuse another region's fitted correction (it is stored in lon/lat).
 CORRECTION_FROM = {"lost_river": "idaho"}
+# Regions whose PRISM baseline shift comes from another region's fit, so their own correction is fitted
+# on the same present-day baseline (a small mountain box would otherwise get a different shift).
+BASELINE_FROM = {"lost_river": "idaho", "sawtooth": "idaho"}
 # Nested regions take ice flowing in across one edge from a coarser run (Cordilleran lobes entering Idaho
 # from British Columbia). Other edges stay ice-free: the coarse run over-glaciates the lowlands there.
 PARENT = {"idaho": ("north_america", "north")}
@@ -55,7 +59,12 @@ def setup(region, km=None, dT=None, use_correction=True):
     y = np.arange(-hh * 1000, hh * 1000 + 1, dx)
     lon, lat = proj.inverse(*np.meshgrid(x, y))
     bed0 = dem.load_bed(proj, x, y, dx)
-    T, P, z_ref, ocean = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)  # PRISM for fine grids
+    # PRISM for fine grids, with the same baseline shift the climate correction (if any) was fitted with:
+    # a small mountain box would otherwise get its own, different shift.
+    path = correction_path(BASELINE_FROM.get(region, CORRECTION_FROM.get(region, region)))
+    stored = np.load(path) if path.exists() else {}
+    shift = stored["shift"] if "shift" in stored else None
+    T, P, z_ref, ocean, shift = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None, shift)
     lgm_dT, ratio = pmip.sample(lon, lat)
     fitted = correction(region, lon, lat) if use_correction else 0.0
     climate = T + lgm_dT + dT + fitted, P * ratio, z_ref, ocean  # present climate + LGM anomalies
@@ -68,4 +77,4 @@ def setup(region, km=None, dT=None, use_correction=True):
         if side == "north":
             H_edge[:-1] = 0  # last row is the northern edge
     return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, climate=climate, H_edge=H_edge,
-                years=years, dt=dt, dT=dT, corrected=bool(np.any(fitted)))
+                years=years, dt=dt, dT=dT, corrected=bool(np.any(fitted)), prism_shift=shift)

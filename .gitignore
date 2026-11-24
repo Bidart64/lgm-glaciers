@@ -1,4 +1,4 @@
-data/
+/data/
 web/data/
 web/config.js
 .venv/

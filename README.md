@@ -3,6 +3,9 @@
 Computes where glaciers and ice sheets should have been at the Last Glacial Maximum (~21,000 years ago)
 and shows them in 3D on satellite imagery.
 
+**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River Range and the Wind River Range;
+no account needed)
+
 ## Run
 
 ```bash

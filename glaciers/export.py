@@ -8,6 +8,7 @@ from PIL import Image
 from scipy.ndimage import distance_transform_edt, gaussian_filter, map_coordinates
 
 from .dem import LAEA
+from .model import GLACIER
 
 CREVASSE_STRAIN = 0.02  # 1/yr: tensile strain rate at which crevasses are fully developed
 
@@ -28,7 +29,7 @@ def flow_lines(vx, vy):
 
 def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
     """One PNG of three bands stacked north to south, each the size of the grid:
-    1. R,G = ice surface + 10000 (m, 16-bit), B = ice thickness (m, capped at 255)
+    1. R,G = ice surface + 10000 (m, 16-bit), B = glacier thickness (m, capped at 255; 0 under GLACIER)
     2. R = crevassing (largest tensile strain rate), G = direction of that stretching (0-255 for 0-180°,
        east = 0, anticlockwise; crevasses open across it), B = 128 + 25 × mass balance (m/yr): above 128 is
        snow-covered accumulation area, below is bare ice
@@ -38,7 +39,7 @@ def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
     directly with present-day elevation tiles. Thick ice is drawn up to that surface, flat across a valley;
     thin ice is draped over the fine terrain at the model's thickness.
     """
-    ice = H > 1
+    ice = H > GLACIER
     dist, near = distance_transform_edt(~ice, return_indices=True)
     # Just outside the ice (valley walls), carry the nearest ice surface rather than the rock, so the
     # browser's interpolated surface stays flat until it meets the walls instead of ramping up them.

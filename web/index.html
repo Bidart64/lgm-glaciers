@@ -445,7 +445,7 @@
       if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 60, bearing: 30, padding: 40, duration: 2500 })
       $('region-name').textContent = r.name.replace('_', ' ')
       $('details').innerHTML =
-        row('Climate', `PMIP4 LGM${r.corrected ? ', fitted to mapped ice' : ''}`) +
+        row('Climate', `PMIP4 LGM${r.mapped ? ', tied to mapped ice' : r.corrected ? ', fitted to mapped ice' : ''}`) +
         row('Ice', `${r.ice_km2.toLocaleString()} km²`) + row('Thickest', `${r.max_ice_m.toLocaleString()} m`) +
         row('Mapped (field evidence)', `${r.mapped_km2.toLocaleString()} km²`) +
         row('Overlap with mapped', `${Math.round(r.iou * 100)}%`) + row('Grid', `${r.dx / 1000} km`)

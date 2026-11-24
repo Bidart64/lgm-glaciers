@@ -16,10 +16,11 @@ SIGMA = 3.0        # daily temperature variability around the monthly mean (K)
 DDF_SNOW, DDF_ICE = 0.003, 0.008  # melt per positive degree-day (m water / K / day)
 REFREEZE = 0.6     # fraction of snowmelt that refreezes in the snowpack
 SEA_LEVEL = -120.0 # LGM sea level (m)
+GLACIER = 20.0     # thinner ice is a film on slopes above the snowline (perennial snow), not a glacier (m)
 MAX_WATER = 500.0  # ice calves rather than grounds in deeper water (m)
 TAU_ISO = 3000.0   # bed relaxation time (yr)
-SLIDE = 3e-3       # basal sliding: velocity per basal shear stress (m / yr / Pa)
-SOFT_BED = 5.0     # sliding enhancement on smooth lowland (sediment) beds
+SLIDE = 1e-4       # basal sliding: velocity per basal shear stress (m / yr / Pa); faster sliding leaves only a film of ice on slopes
+SOFT_BED = 150.0   # sliding enhancement on smooth lowland (sediment) beds
 STEP_SPEED = 80.0  # time step = grid spacing / this (m/yr): results stop changing below it
 MAX_STEP = 25.0    # yr
 ADJUST = 1 / 6     # share of a run's years spent adjusting on the full grid (twice that on the 2x coarser one)

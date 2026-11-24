@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import distance_transform_edt, map_coordinates
 
-from . import dem, export, pmip
+from . import dem, export, outlines, pmip
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 
@@ -23,6 +23,10 @@ REGIONS = {
 # lowlands there.
 PARENT = {"idaho": "north_america"}
 
+MAPPED = -4.0, 20.0   # K added inside and outside the mapped ice in mapped mode: ice fills the outlines (more
+                      # cooling adds little) and none survives outside
+MARGIN = 1500.0       # inside, the cooling builds up over this distance from the outline, so snouts thin out (m)
+
 
 def correction_path(region):
     return dem.CACHE / f"correction_{region}.npz"
@@ -38,8 +42,11 @@ def correction(region, lon, lat):
     return map_coordinates(c["dT"], rc, order=1, mode="nearest")
 
 
-def setup(region, use_correction=True):
-    """Everything a run needs: grid, bedrock, LGM climate (T, P, their elevation) and edge ice."""
+def setup(region, use_correction=True, mapped=False):
+    """Everything a run needs: grid, bedrock, LGM climate (T, P, their elevation) and edge ice.
+    In mapped mode the ice is tied to the field evidence instead of predicted: it is colder inside the
+    mapped extent and nothing survives outside it, so ice fills the outlines and only its thickness and flow
+    are computed. `natural` is the climate without that, for colouring the ice (snow or bare)."""
     lon0, lat0, hw, hh, km, years = REGIONS[region]
     dx = km * 1000.0
     proj = dem.LAEA(lon0, lat0)
@@ -50,12 +57,17 @@ def setup(region, use_correction=True):
     T, P, z_ref = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)  # PRISM for fine grids
     lgm_dT, ratio = pmip.sample(lon, lat)
     fitted = correction(region, lon, lat) if use_correction else 0.0
-    climate = T + lgm_dT + fitted, P * ratio, z_ref  # present climate + LGM anomalies
+    natural = climate = T + lgm_dT + fitted, P * ratio, z_ref  # present climate + LGM anomalies
+    evidence = outlines.rasterize(proj, x, y)  # mapped LGM ice on this grid
+    if mapped:
+        inside = np.minimum(distance_transform_edt(evidence) * dx / MARGIN, 1)
+        climate = climate[0] + np.where(inside > 0, MAPPED[0] * inside, MAPPED[1]), *climate[1:]
 
     H_edge = None
     if region in PARENT:
         s, ice = export.read(WEB, PARENT[region], lon, lat)
         H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
         H_edge[:-1] = 0  # only the last row, the northern edge
-    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, climate=climate, H_edge=H_edge,
+    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, climate=climate, natural=natural, mapped=evidence,
+                H_edge=H_edge,
                 years=years, corrected=bool(np.any(fitted)))

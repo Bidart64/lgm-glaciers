@@ -114,8 +114,7 @@
   <div class="info-panel glass">
     <h3 id="region-name"></h3>
     <div id="details"></div>
-    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).
-      Sand = continental shelf exposed by the lower sea.</p>
+    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).</p>
   </div>
 
   <div class="compass glass" id="compass" title="Facing direction; click to face north">
@@ -134,77 +133,38 @@
 
   <div class="loading-overlay" id="loading"><div class="spinner"></div><p>Loading glaciers...</p></div>
 
-  <script>
-    // Map data comes from Mapbox when config.js sets a token, otherwise from free services (USGS imagery,
-    // AWS Terrain Tiles, OpenFreeMap names), so the page also works with no account, e.g. on GitHub Pages.
-    const TOKEN = window.MAPBOX_TOKEN
-    const DATA = window.LGM_DATA || 'data'
-    const P = TOKEN ? {
-      size: 512, demMaxzoom: 14,
-      demUrl: key => `https://api.mapbox.com/v4/mapbox.mapbox-terrain-dem-v1/${key}@2x.pngraw?access_token=${TOKEN}`,
-      elev: (px, i) => (px[i] * 65536 + px[i + 1] * 256 + px[i + 2]) * 0.1 - 10000,  // Mapbox Terrain-RGB
-      today: { encoding: 'mapbox', tiles: [`https://api.mapbox.com/v4/mapbox.mapbox-terrain-dem-v1/{z}/{x}/{y}@2x.pngraw?access_token=${TOKEN}`] },
-      imagery: { tileSize: 256, maxzoom: 19, tiles: [`https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${TOKEN}`] },
-      credit: '© Mapbox © OpenStreetMap © Maxar',
-      glyphs: `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${TOKEN}`,
-      names: { type: 'vector', maxzoom: 16, tiles: [`https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.mvt?access_token=${TOKEN}`] },
-      towns: { layer: 'place_label', type: ['get', 'type'], extra: ['==', ['get', 'class'], 'settlement'], name: 'name_en' },
-      peaks: { layer: 'natural_label', filter: ['in', ['get', 'maki'], ['literal', ['mountain', 'volcano']]], ele: 'elevation_m', name: 'name_en' },
-      fonts: { town: ['DIN Pro Regular'], peak: ['DIN Pro Italic', 'Arial Unicode MS Regular'] },  // second font has ▲
-    } : {
-      size: 256, demMaxzoom: 15,
-      demUrl: key => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${key}.png`,
-      elev: (px, i) => px[i] * 256 + px[i + 1] + px[i + 2] / 256 - 32768,  // Terrarium
-      today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] },
-      imagery: { tileSize: 256, maxzoom: 16, tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
-      credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS',
-      glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
-      names: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
-      towns: { layer: 'place', type: ['get', 'class'], extra: true, name: 'name:en' },
-      peaks: { layer: 'mountain_peak', filter: ['in', ['get', 'class'], ['literal', ['peak', 'volcano']]], ele: 'ele', name: 'name:en' },
-      fonts: { town: ['Noto Sans Regular'], peak: ['Noto Sans Italic'] },
+  <script id="tiler" type="text/plain">
+    // Runs in web workers, so the map stays smooth: builds each tile of the glacial world from today's
+    // terrain and the model's ice. Returns { dem: Terrarium PNG of the glacial ground, ice: overlay PNG }.
+    let cfg, SIZE, regions = [], ready
+    onmessage = async ({ data: m }) => {
+      if (m.cfg) { cfg = m.cfg; SIZE = cfg.size; ready = load(); return }
+      try {
+        await ready
+        const t = await tile(...m.key.split('/').map(Number))
+        postMessage({ id: m.id, ...t }, [t.dem, t.ice])
+      } catch (e) { postMessage({ id: m.id, error: String(e) }) }
     }
-    const SIZE = P.size
-    // Near a margin, ice thins like an ice-sheet edge profile (H ∝ √distance) instead of ending in a cliff,
-    // over two grid cells (the margin is uncertain by about that much), at most 3 km.
-    const taper = dx => Math.min(3000, 2 * dx)
-    const MIN_ICE = 10  // m: thinner ice is not drawn
-
-    let regions = []  // { ...meta, s, d, shelf }: model grids, finest last so it wins where regions overlap
-    const ready = fetch(`${DATA}/regions.json`).then(r => r.json())
-      // config.js may limit the regions offered (LGM_REGIONS) and add coarse ones drawn only as background
-      // around them (LGM_BACKGROUND), so ice doesn't stop at a region's box edge.
-      .then(list => window.LGM_REGIONS
-        ? list.filter(r => [...window.LGM_REGIONS, ...(window.LGM_BACKGROUND || [])].includes(r.name)) : list)
-      .then(async list => {  // a region that fails to load is skipped rather than blanking the map
-        regions = (await Promise.allSettled(list.map(loadRegion))).filter(r => r.status === 'fulfilled').map(r => r.value)
-      })
 
     async function decode(url, tries = 3) {
       const res = await fetch(url).catch(e => { if (tries > 1) return null; throw e })
-      if (!res || (!res.ok && tries > 1)) return decode(url, tries - 1)
-      const img = await createImageBitmap(await res.blob(),
-                                          { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
+      if (!res || !res.ok) { if (tries > 1) return decode(url, tries - 1); throw new Error(url) }
+      const img = await createImageBitmap(await res.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
       const ctx = new OffscreenCanvas(img.width, img.height).getContext('2d', { willReadFrequently: true })
       ctx.drawImage(img, 0, 0)
       return ctx.getImageData(0, 0, img.width, img.height).data
     }
 
-    async function loadRegion(meta) {
-      const px = await decode(`${DATA}/${meta.name}.png`)
-      const n = meta.nx * meta.ny, s = new Float32Array(n), d = new Float32Array(n), shelf = new Uint8Array(n)
-      for (let i = 0; i < n; i++) {
-        s[i] = px[4 * i] * 256 + px[4 * i + 1] - 10000
-        d[i] = ((px[4 * i + 2] & 127) - 64) / 4 * meta.dx  // signed distance to the ice margin (m)
-        shelf[i] = px[4 * i + 2] >> 7
-      }
-      // Optional surface detail (glaciers/export.py surface_detail): crevassing, its direction, mass balance.
-      const crev = new Float32Array(n), ang = new Float32Array(n), mb = new Float32Array(n).fill(1)
-      const fx = await decode(`${DATA}/${meta.name}.flow.png`, 1).catch(() => null)
-      if (fx) for (let i = 0; i < n; i++) {
-        crev[i] = fx[4 * i] / 255; ang[i] = fx[4 * i + 1] / 255 * Math.PI; mb[i] = (fx[4 * i + 2] - 128) / 25
-      }
-      return { ...meta, s, d, shelf, crev, ang, mb, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
+    // Model grids (glaciers/export.py), coarsest first; a region that fails to load is skipped.
+    async function load() {
+      const list = (await (await fetch(`${cfg.data}/regions.json`)).json()).filter(r => !cfg.names || cfg.names.includes(r.name))
+      regions = (await Promise.allSettled(list.map(async meta => {
+        const px = await decode(`${cfg.data}/${meta.name}.png`), n = meta.nx * meta.ny
+        const band = (b, c) => Uint8Array.from({ length: n }, (_, i) => px[4 * (b * n + i) + c])
+        const s = Float32Array.from({ length: n }, (_, i) => px[4 * i] * 256 + px[4 * i + 1] - 10000)
+        return { ...meta, s, h: band(0, 2), crev: band(1, 0), ang: band(1, 1), mb: band(1, 2), phi: band(2, 0),
+                 lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
+      }))).filter(r => r.status === 'fulfilled').map(r => r.value)
     }
 
     // Spherical Lambert azimuthal equal-area, matching glaciers/dem.py.
@@ -229,118 +189,34 @@
       return out
     }
 
-    // Bilinear sample of every region at one point: { s, d, shelf }. Finer regions win, blended in over
-    // 10 cells from their edge so there is no seam where they meet a coarser one.
-    function sampleIce(lon, lat) {
-      let out = null
+    // The model at one point, written to g[o...]: ice surface (m), thickness (m, capped at 255), crevassing
+    // (0-1), mass balance (m/yr), flow-line value (0-1), stretching direction (radians).
+    const F = 6
+    function sample(lon, lat, g, o) {
+      g.set([-1e4, 0, 0, -9, 0, 0], o)
+      let found = false
       for (const r of regions) {
         const [x, y] = laea(r, lon, lat)
         const fx = (x - r.x0) / r.dx, fy = (r.y1 - y) / r.dx
         if (fx < 0 || fy < 0 || fx >= r.nx - 1 || fy >= r.ny - 1) continue
         const i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j, k = j * r.nx + i
-        const w = [(1 - u) * (1 - v), u * (1 - v), (1 - u) * v, u * v], ks = [k, k + 1, k + r.nx, k + r.nx + 1]
-        const mix = a => w[0] * a[ks[0]] + w[1] * a[ks[1]] + w[2] * a[ks[2]] + w[3] * a[ks[3]]
-        const m = { s: cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s), d: mix(r.d), shelf: mix(r.shelf), crev: mix(r.crev), mb: mix(r.mb), tp: taper(r.dx),
-                    ang: r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] }  // nearest: angles don't average
-        const t = Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10
-        if (out && t < 1) for (const f of ['s', 'd', 'shelf', 'crev', 'mb', 'tp']) m[f] = out[f] + t * (m[f] - out[f])
-        out = m
+        const mix = a => (1 - v) * ((1 - u) * a[k] + u * a[k + 1]) + v * ((1 - u) * a[k + r.nx] + u * a[k + r.nx + 1])
+        const m = [cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s), mix(r.h), mix(r.crev) / 255, (mix(r.mb) - 128) / 25, mix(r.phi) / 255]
+        // Finer regions win, blended in over 10 cells from their edge so there is no seam.
+        const t = found ? Math.min(1, Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10) : 1
+        for (let f = 0; f < 5; f++) g[o + f] += t * (m[f] - g[o + f])
+        g[o + 5] = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * Math.PI  // nearest: angles don't average
+        found = true
       }
-      return out
     }
 
-    // One tile of the glacial world, encoded once: { dem: Terrarium PNG of the ground, ice: overlay PNG }.
-    // The ice surface is smooth, so it is sampled every STEP pixels and interpolated between.
-    const STEP = 8, L = SIZE / STEP + 1, NONE = { s: -1e4, d: -1e5, shelf: 0, crev: 0, mb: 1, ang: 0, tp: 3000 }
-    const cache = new Map()
-    function glacialTile(z, x, y) {
-      const key = `${z}/${x}/${y}`
-      if (!cache.has(key)) {
-        if (cache.size > 200) cache.delete(cache.keys().next().value)
-        cache.set(key, ready.then(() => decode(P.demUrl(key))).then(async px => {
-          const n = 2 ** z, grid = []
-          for (let j = 0; j < L; j++) {
-            const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + j / (L - 1)) / n))) * 180 / Math.PI
-            for (let k = 0; k < L; k++) grid.push(sampleIce((x + k / (L - 1)) / n * 360 - 180, lat) || NONE)
-          }
-          // Pass 1: the glacial ground (today's terrain raised to the ice surface) and the ice on it.
-          const N2 = SIZE * SIZE, ground = new Float32Array(N2), thick = new Float32Array(N2)
-          const crev = new Float32Array(N2), mb = new Float32Array(N2), ang = new Float32Array(N2), edge = new Float32Array(N2)
-          const shelf = new Uint8Array(N2), dem = new Uint8ClampedArray(N2 * 4), ice = new Uint8ClampedArray(N2 * 4)
-          for (let row = 0; row < SIZE; row++) {
-            const j = Math.min(row / STEP | 0, L - 2), v = row / STEP - j
-            for (let col = 0; col < SIZE; col++) {
-              const k = Math.min(col / STEP | 0, L - 2), u = col / STEP - k, i = row * SIZE + col
-              const a = grid[j * L + k], b = grid[j * L + k + 1], c = grid[(j + 1) * L + k], e = grid[(j + 1) * L + k + 1]
-              const mix = f => (1 - v) * ((1 - u) * a[f] + u * b[f]) + v * ((1 - u) * c[f] + u * e[f])
-              const elev = P.elev(px, 4 * i)
-              const d = mix('d')
-              let h = 0
-              if (d > 0) h = Math.max(mix('s') - elev, 0) * Math.min(1, Math.sqrt(d / mix('tp')))  // ice burying the ground
-              if (h < MIN_ICE) h = 0  // a few metres over rock is a snow patch, not a glacier
-              ground[i] = Math.max(elev, 0) + h  // flat sea: no seafloor relief
-              thick[i] = h; edge[i] = d
-              if (h > 0) { crev[i] = mix('crev'); mb[i] = mix('mb'); ang[i] = (u + v < 1 ? a : e).ang }
-              shelf[i] = mix('shelf') > 0.5
-              const g = ground[i] + 32768
-              dem[4 * i] = Math.floor(g / 256); dem[4 * i + 1] = Math.floor(g % 256); dem[4 * i + 2] = Math.floor((g % 1) * 256); dem[4 * i + 3] = 255
-            }
-          }
-          // Pass 2: paint the ice - snow or bare ice from the mass balance, crevasses from the strain rate,
-          // lit by its own surface normals so its 3D shape shows.
-          const lat0 = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))
-          const mpp = 40075016 * Math.cos(lat0) / (n * SIZE)          // metres per pixel
-          const showCrevasses = Math.min(1, Math.max(0, (25 - mpp) / 15))  // only where they can be resolved
-          for (let row = 0; row < SIZE; row++) {
-            for (let col = 0; col < SIZE; col++) {
-              const i = row * SIZE + col, p = 4 * i, h = thick[i]
-              if (h <= 0) {
-                if (shelf[i]) { ice[p] = 205; ice[p + 1] = 185; ice[p + 2] = 140; ice[p + 3] = 170 }
-                continue
-              }
-              // Surface normal from the glacial ground; sun from the north-west, 40° up.
-              const l = ground[i - (col > 0)], r2 = ground[i + (col < SIZE - 1)]
-              const t = ground[i - (row > 0) * SIZE], bo = ground[i + (row < SIZE - 1) * SIZE]
-              const gx = (r2 - l) / (2 * mpp), gy = (t - bo) / (2 * mpp)     // east and north slopes
-              const shade = Math.max(0, (-gx * -0.54 - gy * 0.54 + 0.64) / Math.sqrt(gx * gx + gy * gy + 1))
-              const X = (x * SIZE + col) * mpp, Y = -(y * SIZE + row) * mpp  // ground metres, x east, y north
-              // Snow above the snowline, bare blue ice below, greyer with debris towards the snout.
-              const snow = Math.min(1, Math.max(0, (mb[i] + 0.3) / 0.6))
-              const debris = (1 - snow) * Math.min(1, Math.max(0, (-mb[i] - 2) / 6 + (1 - Math.min(1, edge[i] / 1500)) * 0.5))
-              const grain = noise(X / 60, Y / 60)
-              let R = 200 + 48 * snow, G = 224 + 27 * snow, B = 236 + 17 * snow  // pale glacier blue to snow
-              const dm = debris * (0.6 + 0.4 * grain)
-              R += (128 - R) * dm; G += (120 - G) * dm; B += (112 - B) * dm
-              // Crevasses: irregular dark-blue lines across the direction of stretching.
-              const cv = crev[i] * showCrevasses * (1 - snow * 0.6)
-              if (cv > 0.02) {
-                const ca = Math.cos(ang[i]), sa = Math.sin(ang[i])
-                const along = (X * ca + Y * sa) / 45 + 1.6 * noise(X / 120, Y / 120)
-                const across = (-X * sa + Y * ca) / 90
-                const width = 0.06 + 0.2 * cv * (0.5 + 0.5 * noise(across * 0.5, along * 0.2))
-                const f = along - Math.floor(along)
-                if (f < width && noise(across * 0.4, Math.floor(along) * 0.7) > 0.2) {  // long, irregular segments
-                  const depth = 1 - f / width
-                  R += (40 - R) * depth * cv; G += (85 - G) * depth * cv; B += (130 - B) * depth * cv
-                }
-              }
-              const light = 0.6 + 0.55 * shade  // soft shadows: snow and ice scatter light into them
-              ice[p] = R * light; ice[p + 1] = G * light; ice[p + 2] = B * Math.min(1.08, light + 0.05)
-              ice[p + 3] = 255
-            }
-          }
-          return { dem: await png(dem), ice: await png(ice) }
-        }))
-      }
-      return cache.get(key)
-    }
-
-    // Smooth value noise in [0, 1] (for snow grain, debris and irregular crevasses).
+    // Smooth value noise in [0, 1] (snow grain, debris, irregular crevasses and snowlines).
     function hash(i, j) { const h = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return h - Math.floor(h) }
     function noise(x, y) {
       const i = Math.floor(x), j = Math.floor(y), u = x - i, v = y - j, su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v)
       return (hash(i, j) * (1 - su) + hash(i + 1, j) * su) * (1 - sv) + (hash(i, j + 1) * (1 - su) + hash(i + 1, j + 1) * su) * sv
     }
+    const clamp = v => Math.min(1, Math.max(0, v))
 
     async function png(rgba) {
       const canvas = new OffscreenCanvas(SIZE, SIZE)
@@ -348,10 +224,159 @@
       return (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer()
     }
 
-    // lgm://dem/... -> glacial ground (Terrarium); lgm://ice/... -> ice + exposed shelf overlay.
+    const MIN_ICE = 8     // m: thinner ice is not drawn
+    const VENEER = 30     // m: ice up to this thin follows the fine terrain instead of a flat surface
+    const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
+    async function tile(z, x, y) {
+      const px = await decode(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y))
+      const n = 2 ** z
+      const mpp = 40075016 * Math.cos(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))) / (n * SIZE)  // metres per pixel
+      // The model is smooth: sample it every STEP pixels (but at least once per model cell) and interpolate.
+      const STEP = 2 ** Math.min(3, Math.max(0, Math.floor(Math.log2(Math.min(...regions.map(r => r.dx)) / mpp))))
+      const L = SIZE / STEP + 1, g = new Float32Array(L * L * F)
+      for (let j = 0; j < L; j++) {
+        const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + j / (L - 1)) / n))) * 180 / Math.PI
+        for (let k = 0; k < L; k++) sample((x + k / (L - 1)) / n * 360 - 180, lat, g, (j * L + k) * F)
+      }
+      // Slopes (rise per pixel) of a tile-sized array, towards the east and north.
+      const ddx = (a, i, col) => col === 0 ? a[i + 1] - a[i] : col === SIZE - 1 ? a[i] - a[i - 1] : (a[i + 1] - a[i - 1]) / 2
+      const ddy = (a, i, row) => row === 0 ? a[i] - a[i + SIZE] : row === SIZE - 1 ? a[i - SIZE] - a[i] : (a[i - SIZE] - a[i + SIZE]) / 2
+
+      const N2 = SIZE * SIZE, elev = new Float32Array(N2), ground = new Float32Array(N2), thick = new Float32Array(N2)
+      const m = new Float32Array(N2 * F), dem = new Uint8ClampedArray(N2 * 4), ice = new Uint8ClampedArray(N2 * 4)
+      for (let i = 0; i < N2; i++) {  // today's ground; the sea is flat
+        elev[i] = Math.max(0, cfg.mapbox ? (px[4 * i] * 65536 + px[4 * i + 1] * 256 + px[4 * i + 2]) * 0.1 - 10000
+                                         : px[4 * i] * 256 + px[4 * i + 1] + px[4 * i + 2] / 256 - 32768)
+      }
+      // Pass 1: the glacial ground (today's terrain plus the ice burying it).
+      for (let row = 0; row < SIZE; row++) {
+        const j = Math.min(row / STEP | 0, L - 2), v = row / STEP - j
+        for (let col = 0; col < SIZE; col++) {
+          const k = Math.min(col / STEP | 0, L - 2), u = col / STEP - k, i = row * SIZE + col
+          const a = (j * L + k) * F, b = a + F, c = a + L * F, d = c + F
+          for (let f = 0; f < 5; f++) m[i * F + f] = (1 - v) * ((1 - u) * g[a + f] + u * g[b + f]) + v * ((1 - u) * g[c + f] + u * g[d + f])
+          m[i * F + 5] = g[(u + v < 1 ? a : d) + 5]
+          const hm = m[i * F + 1]
+          let h = 0
+          if (hm > 0.5) {
+            // Thick ice fills up to the model's surface, flat across valleys the model can't resolve. Thin ice
+            // instead keeps the model's thickness over the fine terrain, except on slopes too steep to hold it.
+            // Towards a margin the model's thickness runs out, so the ice thins to nothing instead of ending
+            // in a cliff.
+            const steep = Math.hypot(ddx(elev, i, col), ddy(elev, i, row)) / mpp
+            const lo = Math.min(hm, VENEER) * clamp((1.2 - steep) / 0.4) * clamp(2 - hm / VENEER)
+            const hi = Math.max(lo, 2 * hm / (1 - Math.min(hm, 249) / 250))
+            h = Math.min(Math.max(m[i * F] - elev[i], lo), hi)
+            if (h < MIN_ICE) h = 0
+          }
+          thick[i] = h
+          const e = (ground[i] = elev[i] + h) + 32768
+          dem.set([e >> 8, e & 255, (e % 1) * 256 | 0, 255], 4 * i)  // Terrarium
+        }
+      }
+      // Pass 2: paint the ice, lit by its own surface so its shape shows: snow above the snowline, bare blue
+      // ice below, flow bands and moraines along the flow lines, crevasses where the ice stretches, debris
+      // towards the snouts. Ice-free ground above the snowline carries perennial snow.
+      const showFine = clamp((25 - mpp) / 15)  // crevasses only where they can be resolved
+      for (let row = 0; row < SIZE; row++) {
+        for (let col = 0; col < SIZE; col++) {
+          const i = row * SIZE + col, o = i * F, h = thick[i], hm = m[o + 1], mb = m[o + 3]
+          const gx = ddx(ground, i, col) / mpp, gy = ddy(ground, i, row) / mpp
+          const X = (x * SIZE + col) * mpp, Y = -(y * SIZE + row) * mpp  // ground metres, x east, y north
+          const rough = noise(X / 70, Y / 70)
+          if (h <= 0 && clamp(mb / 0.3) * clamp((1.0 - Math.hypot(gx, gy)) / 0.3) < 0.35 + 0.3 * rough) continue
+          // The snowline wobbles; bare ice gets greyer with debris towards the snout.
+          const snow = h > 0 ? clamp((mb + 0.5 * (noise(X / 400, Y / 400) - 0.5)) / 0.5 + 0.5) : 1
+          const bare = 1 - snow
+          let c = SNOW.map((s, q) => s + (ICE[q] - s) * bare)
+          const tint = (to, t) => { c = c.map((s, q) => s + (to[q] - s) * t) }
+          // Flow bands: some flow lines carry rock from the valley walls (medial moraines).
+          const band = m[o + 4] * 18, id = Math.floor(band), dist = Math.abs(band - id - 0.5)
+          const load = hash(id, 7)
+          tint(DEBRIS, bare * (load > 0.5 ? 0.5 * clamp(1 - dist / (0.05 + 0.25 * (load - 0.5))) : 0))
+          tint(DEEP, 0.10 * hash(id, 3) * (0.4 + 0.6 * bare))
+          tint(DEBRIS, bare * clamp((-mb - 1.5) / 5 + (1 - clamp(hm / 60)) * 0.5) * (0.5 + 0.5 * rough))
+          // Crevasses: irregular dark-blue lines across the direction of stretching.
+          const cv = clamp((m[o + 2] - 0.25) / 0.5) * showFine * (1 - snow * 0.4)
+          if (cv > 0) {
+            const ca = Math.cos(m[o + 5]), sa = Math.sin(m[o + 5])
+            const along = (X * ca + Y * sa) / 40 + 1.6 * noise(X / 120, Y / 120)
+            const across = (-X * sa + Y * ca) / 90
+            const width = 0.08 + 0.25 * cv * (0.5 + 0.5 * noise(across * 0.5, along * 0.2))
+            const f = along - Math.floor(along)
+            if (f < width) tint(DEEP, (1 - f / width) * cv * clamp(4 * noise(across * 0.4, Math.floor(along) * 0.7) - 1))
+          }
+          // Sun from the north-west, 40° up; the gentle relief of ice is exaggerated so it reads. Shadows on
+          // snow and ice are blue: they are lit by the sky.
+          const Z = 2.5, lit = Math.max(0, (0.54 * gx * Z - 0.54 * gy * Z + 0.64) / Math.sqrt((gx * gx + gy * gy) * Z * Z + 1)) / 0.64
+          const light = 0.5 + 0.5 * Math.min(1.5, lit) + 0.03 * (rough - 0.5)
+          ice.set([c[0] * light, c[1] * (0.25 + 0.75 * light), c[2] * (0.45 + 0.55 * light), 255], 4 * i)
+        }
+      }
+      return { dem: await png(dem), ice: await png(ice) }
+    }
+  </script>
+
+  <script>
+    // Map data comes from Mapbox when config.js sets a token, otherwise from free services (USGS imagery,
+    // AWS Terrain Tiles, OpenFreeMap names), so the page also works with no account, e.g. on GitHub Pages.
+    const TOKEN = window.MAPBOX_TOKEN
+    const DATA = new URL(window.LGM_DATA || 'data', location.href).href
+    const P = TOKEN ? {
+      size: 512, demMaxzoom: 14,
+      today: { encoding: 'mapbox', tiles: [`https://api.mapbox.com/v4/mapbox.mapbox-terrain-dem-v1/{z}/{x}/{y}@2x.pngraw?access_token=${TOKEN}`] },
+      imagery: { tileSize: 256, maxzoom: 19, tiles: [`https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${TOKEN}`] },
+      credit: '© Mapbox © OpenStreetMap © Maxar',
+      glyphs: `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${TOKEN}`,
+      names: { type: 'vector', maxzoom: 16, tiles: [`https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.mvt?access_token=${TOKEN}`] },
+      towns: { layer: 'place_label', type: ['get', 'type'], extra: ['==', ['get', 'class'], 'settlement'], name: 'name_en' },
+      peaks: { layer: 'natural_label', filter: ['in', ['get', 'maki'], ['literal', ['mountain', 'volcano']]], ele: 'elevation_m', name: 'name_en' },
+      fonts: { town: ['DIN Pro Regular'], peak: ['DIN Pro Italic', 'Arial Unicode MS Regular'] },  // second font has ▲
+    } : {
+      size: 256, demMaxzoom: 15,
+      today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] },
+      imagery: { tileSize: 256, maxzoom: 16, tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
+      credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS',
+      glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+      names: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
+      towns: { layer: 'place', type: ['get', 'class'], extra: true, name: 'name:en' },
+      peaks: { layer: 'mountain_peak', filter: ['in', ['get', 'class'], ['literal', ['peak', 'volcano']]], ele: 'ele', name: 'name:en' },
+      fonts: { town: ['Noto Sans Regular'], peak: ['Noto Sans Italic'] },
+    }
+    const SIZE = P.size
+    const $ = id => document.getElementById(id)
+
+    // config.js may limit the regions offered (LGM_REGIONS) and add coarse ones drawn only as background
+    // around them (LGM_BACKGROUND), so ice doesn't stop at a region's box edge.
+    const listed = r => !window.LGM_REGIONS || window.LGM_REGIONS.includes(r.name)
+    const names = window.LGM_REGIONS && [...window.LGM_REGIONS, ...(window.LGM_BACKGROUND || [])]
+
+    // Tiles are built by a few workers (the "tiler" script above); each tile is built once and kept.
+    const source = URL.createObjectURL(new Blob([$('tiler').textContent], { type: 'text/javascript' }))
+    const jobs = new Map(), tiles = new Map()
+    const workers = Array.from({ length: Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2)) }, () => {
+      const w = new Worker(source)
+      w.busy = 0
+      w.postMessage({ cfg: { data: DATA, names, dem: P.today.tiles[0], mapbox: !!TOKEN, size: SIZE } })
+      w.onmessage = ({ data }) => { w.busy--; jobs.get(data.id)(data); jobs.delete(data.id) }
+      return w
+    })
+    function glacialTile(key) {
+      if (!tiles.has(key)) {
+        if (tiles.size > 300) tiles.delete(tiles.keys().next().value)
+        tiles.set(key, new Promise((resolve, reject) => {
+          const w = workers.reduce((a, b) => a.busy <= b.busy ? a : b), id = Math.random()
+          jobs.set(id, d => d.error ? (tiles.delete(key), reject(new Error(d.error))) : resolve(d))
+          w.busy++
+          w.postMessage({ id, key })
+        }))
+      }
+      return tiles.get(key)
+    }
+    // lgm://dem/z/x/y -> glacial ground (Terrarium); lgm://ice/z/x/y -> ice and snow overlay.
     maplibregl.addProtocol('lgm', async ({ url }) => {
-      const [, kind, z, x, y] = url.match(/lgm:\/\/(\w+)\/(\d+)\/(\d+)\/(\d+)/)
-      return { data: (await glacialTile(+z, +x, +y))[kind].slice(0) }  // copy: MapLibre may transfer it
+      const [, kind, key] = url.match(/lgm:\/\/(\w+)\/(.+)/)
+      return { data: (await glacialTile(key))[kind].slice(0) }  // copy: MapLibre may transfer it
     })
 
     const name = key => ['coalesce', ['get', key], ['get', 'name']]
@@ -359,6 +384,7 @@
     let glaciersOn = true
     const terrain = () => ({ source: glaciersOn ? 'terrain' : 'today', exaggeration: 1.4 })
     const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: SIZE, encoding: 'terrarium', maxzoom: P.demMaxzoom }
+    const shade = { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' }
     const map = new maplibregl.Map({
       container: 'map', center: [-113.65, 44.05], zoom: 9, pitch: 60, bearing: 30, maxPitch: 80, hash: true,  // URL keeps the view
       style: {
@@ -366,7 +392,7 @@
         glyphs: P.glyphs,
         sources: {
           satellite: { type: 'raster', ...P.imagery,
-                       attribution: `${P.credit} · Bedrock: ETOPO 2022 · Climate: WorldClim, PRISM, PMIP4` },
+                       attribution: `${P.credit} · Ice model: Mapzen terrain, ETOPO 2022, PRISM, WorldClim, PMIP4` },
           ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: SIZE, maxzoom: P.demMaxzoom },
           terrain: dem, shade: dem,
           today: { type: 'raster-dem', tileSize: SIZE, maxzoom: P.demMaxzoom, ...P.today },
@@ -375,10 +401,8 @@
         layers: [
           { id: 'satellite', type: 'raster', source: 'satellite' },
           { id: 'ice', type: 'raster', source: 'ice', paint: { 'raster-resampling': 'linear' } },
-          { id: 'shade', type: 'hillshade', source: 'shade',
-            paint: { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' } },
-          { id: 'shade-today', type: 'hillshade', source: 'today', layout: { visibility: 'none' },
-            paint: { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' } },
+          { id: 'shade', type: 'hillshade', source: 'shade', paint: shade },
+          { id: 'shade-today', type: 'hillshade', source: 'today', layout: { visibility: 'none' }, paint: shade },
           { id: 'towns', type: 'symbol', source: 'names', 'source-layer': P.towns.layer,
             filter: ['all', P.towns.extra,
                      ['any', ['==', P.towns.type, 'city'],
@@ -407,14 +431,13 @@
     const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
     function updateCompass() {
       const b = (map.getBearing() % 360 + 360) % 360
-      document.getElementById('rose').style.transform = `rotate(${-b}deg)`
-      document.getElementById('heading').textContent = `${Math.round(b) % 360}° ${DIRS[Math.round(b / 45) % 8]}`
+      $('rose').style.transform = `rotate(${-b}deg)`
+      $('heading').textContent = `${Math.round(b) % 360}° ${DIRS[Math.round(b / 45) % 8]}`
     }
     map.on('rotate', updateCompass)
     map.on('load', updateCompass)
-    document.getElementById('compass').onclick = () => map.easeTo({ bearing: 0, duration: 800 })
+    $('compass').onclick = () => map.easeTo({ bearing: 0, duration: 800 })
 
-    const $ = id => document.getElementById(id)
     const row = (k, v) => `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-value">${v}</span></div>`
     let current = null
     function show(r, fly = true) {
@@ -422,24 +445,20 @@
       if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 60, bearing: 30, padding: 40, duration: 2500 })
       $('region-name').textContent = r.name.replace('_', ' ')
       $('details').innerHTML =
-        row('Climate', `PMIP4 LGM${r.dT ? ` ${r.dT > 0 ? '+' : ''}${r.dT} °C` : ''}${r.corrected ? ', fitted to mapped ice' : ''}`) +
-        row('Ice', `${r.ice_km2.toLocaleString()} km²`) +
-        row('Thickest', `${r.max_ice_m.toLocaleString()} m`) +
-        (r.mapped_km2 > 0.1 * r.ice_km2  // Patagonia's ice sheet is in neither dataset
-          ? row('Mapped (field evidence)', `${r.mapped_km2.toLocaleString()} km²`) + row('Overlap with mapped', `${Math.round(r.iou * 100)}%`)
-          : row('Mapped (field evidence)', 'not covered')) +
-        row('Sea level', `${r.sea_level} m`) + row('Grid', `${r.dx / 1000} km`)
+        row('Climate', `PMIP4 LGM${r.corrected ? ', fitted to mapped ice' : ''}`) +
+        row('Ice', `${r.ice_km2.toLocaleString()} km²`) + row('Thickest', `${r.max_ice_m.toLocaleString()} m`) +
+        row('Mapped (field evidence)', `${r.mapped_km2.toLocaleString()} km²`) +
+        row('Overlap with mapped', `${Math.round(r.iou * 100)}%`) + row('Grid', `${r.dx / 1000} km`)
     }
 
-    ready.then(() => {
-      const select = $('region')
-      const listed = r => !window.LGM_REGIONS || window.LGM_REGIONS.includes(r.name)
-      select.innerHTML = regions.map((r, i) => listed(r) ? `<option value="${i}">${r.name.replace('_', ' ')}</option>` : '').join('')
-      select.style.display = regions.filter(listed).length > 1 ? '' : 'none'
+    fetch(`${DATA}/regions.json`).then(r => r.json()).then(all => {
+      const regions = all.filter(listed), select = $('region')  // coarsest first
+      select.innerHTML = regions.map((r, i) => `<option value="${i}">${r.name.replace('_', ' ')}</option>`).join('')
+      select.style.display = regions.length > 1 ? '' : 'none'
       select.onchange = () => show(regions[select.value])
       // A shared link opens on the finest region under its view; otherwise start on the finest region.
       const { lng, lat } = map.getCenter()
-      const here = regions.findLastIndex(r => listed(r) && lng > r.bounds[0] && lng < r.bounds[2] && lat > r.bounds[1] && lat < r.bounds[3])
+      const here = regions.findLastIndex(r => lng > r.bounds[0] && lng < r.bounds[2] && lat > r.bounds[1] && lat < r.bounds[3])
       const start = regions.findIndex(r => r.name === window.LGM_START)  // config.js may name a starting region
       select.value = location.hash && here >= 0 ? here : start >= 0 ? start : regions.length - 1
       show(regions[select.value], !location.hash)
@@ -466,6 +485,7 @@
     window.addEventListener('mouseup', () => { drag = null })
 
     // Controls, as in ../maps: reset view, 3D terrain on/off, cycle the viewing angle; plus glaciers on/off.
+    const visible = (ids, on) => ids.forEach(id => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'))
     $('reset').onclick = () => current && show(current)
     $('terrain3d').onclick = e => {
       const on = !map.getTerrain()
@@ -474,22 +494,17 @@
     }
     $('glaciers').onclick = e => {
       glaciersOn = e.currentTarget.classList.toggle('on')
-      map.setLayoutProperty('ice', 'visibility', glaciersOn ? 'visible' : 'none')
-      map.setLayoutProperty('shade', 'visibility', glaciersOn ? 'visible' : 'none')
-      map.setLayoutProperty('shade-today', 'visibility', glaciersOn ? 'none' : 'visible')
+      visible(['ice', 'shade'], glaciersOn)
+      visible(['shade-today'], !glaciersOn)
       if (map.getTerrain()) map.setTerrain(terrain())
     }
     $('tilt').onclick = () => {
       const pitches = [0, 30, 60, 75]
       map.easeTo({ pitch: pitches.find(p => p > map.getPitch() + 1) ?? 0, duration: 500 })
     }
-    $('names').onclick = e => {
-      const on = e.currentTarget.classList.toggle('on')
-      ;['towns', 'peaks'].forEach(id => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'))
-    }
+    $('names').onclick = e => visible(['towns', 'peaks'], e.currentTarget.classList.toggle('on'))
     // Field-evidence outlines, fetched only when first switched on; drawn like ../maps' trails (glow + line).
     $('mapped').onclick = e => {
-      const on = e.currentTarget.classList.toggle('on')
       if (!map.getSource('mapped')) {
         map.addSource('mapped', { type: 'geojson', data: `${DATA}/outlines.geojson` })
         map.addLayer({ id: 'mapped-glow', type: 'line', source: 'mapped',
@@ -497,7 +512,7 @@
         map.addLayer({ id: 'mapped', type: 'line', source: 'mapped',
                        paint: { 'line-color': '#00ffaa', 'line-width': 2, 'line-opacity': 0.9, 'line-dasharray': [2, 1.5] } }, 'towns')
       }
-      ;['mapped-glow', 'mapped'].forEach(id => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'))
+      visible(['mapped-glow', 'mapped'], e.currentTarget.classList.toggle('on'))
     }
   </script>
 </body>

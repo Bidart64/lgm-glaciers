@@ -1,5 +1,5 @@
-"""Inputs on a projected grid: bedrock topography (ETOPO 2022, ice sheets removed) and present climate
-(WorldClim worldwide, PRISM 800 m in the contiguous US)."""
+"""Inputs on a projected grid: bedrock topography (ETOPO 2022 with ice sheets removed, or free 10-30 m terrain
+tiles for fine grids) and present climate (WorldClim worldwide, PRISM 800 m in the contiguous US)."""
 
 import io
 import time
@@ -40,12 +40,8 @@ class LAEA:
         return (np.degrees(lon) + 180) % 360 - 180, np.degrees(lat)
 
 
-OPENDAP = ("https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/{s}s/"
-           "{s}s_bed_elev_netcdf/ETOPO_2022_v1_{s}s_N90W180_bed.nc.ascii")
-# 15" comes in 15° tiles named by their north-west corner. Its bedrock variant only covers the Arctic, so the
-# surface variant is used: identical to bedrock wherever there is no ice sheet today.
-OPENDAP_15S = ("https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/15s/15s_surface_elev_netcdf/"
-               "ETOPO_2022_v1_15s_{}{:02d}{}{:03d}_surface.nc.ascii")
+ETOPO = ("https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/60s/60s_bed_elev_netcdf/"
+         "ETOPO_2022_v1_60s_N90W180_bed.nc.ascii")
 
 
 def _get(url, tries=4):
@@ -59,44 +55,21 @@ def _get(url, tries=4):
             time.sleep(10 * (attempt + 1))
 
 
-def _tiles(per_deg):
-    """(first global row, first global column, rows, columns, url) of each file of an ETOPO 2022 resolution."""
-    if per_deg < 240:
-        yield 0, 0, 180 * per_deg, 360 * per_deg, OPENDAP.format(s=3600 // per_deg)
-        return
-    for north in range(-75, 91, 15):
-        for west in range(-180, 180, 15):
-            url = OPENDAP_15S.format("N" if north >= 0 else "S", abs(north), "W" if west < 0 else "E", abs(west))
-            yield (north - 15 + 90) * 240, (west + 180) * 240, 3600, 3600, url
-
-
-def fetch_bed(lon_min, lon_max, lat_min, lat_max, stride, per_deg=60):
-    """Download (and cache) an ETOPO 2022 bedrock box at 1' (per_deg=60), 30" (120) or 15" (240).
-    Returns lon, lat, elevation."""
-    i0, i1 = (int((v + 90) * per_deg) for v in (lat_min, lat_max))
-    j0, j1 = (int((v + 180) * per_deg) for v in (lon_min, lon_max))
-    i1, j1 = min(i1, 180 * per_deg - 1), min(j1, 360 * per_deg - 1)
+def fetch_bed(lon_min, lon_max, lat_min, lat_max, stride):
+    """Download (and cache) a box of ETOPO 2022 1' bedrock, every `stride` cells. Returns lon, lat, elevation."""
+    i0, i1 = (int((v + 90) * 60) for v in (lat_min, lat_max))
+    j0, j1 = (int((v + 180) * 60) for v in (lon_min, lon_max))
+    i1, j1 = min(i1, 180 * 60 - 1), min(j1, 360 * 60 - 1)
     CACHE.mkdir(exist_ok=True)
-    path = CACHE / f"bed_{i0}_{i1}_{j0}_{j1}_{stride}{'' if per_deg == 60 else f'_{3600 // per_deg}s'}.npy"
+    path = CACHE / f"bed_{i0}_{i1}_{j0}_{j1}_{stride}.npy"
     if not path.exists():
         print(f"downloading ETOPO 2022 bedrock -> {path.name}")
-        z = np.full((len(range(i0, i1 + 1, stride)), len(range(j0, j1 + 1, stride))), np.nan)
-        for ti, tj, n, m, url in _tiles(per_deg):
-            # global indices on the stride lattice that fall inside this tile
-            a, b = max(i0, ti + (i0 - ti) % stride), min(i1, ti + n - 1)
-            c, d = max(j0, tj + (j0 - tj) % stride), min(j1, tj + m - 1)
-            if a > b or c > d:
-                continue
-            q = f"?z%5B{a - ti}:{stride}:{b - ti}%5D%5B{c - tj}:{stride}:{d - tj}%5D"
-            text = _get(url + q).decode()
-            rows = text.split("z.z[")[1].split("\n\n")[0].splitlines()[1:]
-            block = np.array([[float(v) for v in r.split(",")[1:]] for r in rows])
-            z[(a - i0) // stride:(a - i0) // stride + len(block), (c - j0) // stride:(c - j0) // stride + block.shape[1]] = block
-        np.save(path, z)
-    z = np.load(path)
-    lat = -90 + (np.arange(i0, i1 + 1, stride) + 0.5) / per_deg
-    lon = -180 + (np.arange(j0, j1 + 1, stride) + 0.5) / per_deg
-    return lon, lat, z
+        text = _get(f"{ETOPO}?z%5B{i0}:{stride}:{i1}%5D%5B{j0}:{stride}:{j1}%5D").decode()
+        rows = text.split("z.z[")[1].split("\n\n")[0].splitlines()[1:]
+        np.save(path, np.array([[float(v) for v in r.split(",")[1:]] for r in rows]))
+    lat = -90 + (np.arange(i0, i1 + 1, stride) + 0.5) / 60
+    lon = -180 + (np.arange(j0, j1 + 1, stride) + 0.5) / 60
+    return lon, lat, np.load(path)
 
 
 TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{}/{}/{}.png"
@@ -123,32 +96,26 @@ def fetch_terrain(lon_min, lon_max, lat_min, lat_max, z):
 
 
 def load_bed(proj, x, y, dx):
-    """Bedrock elevation (m) on the projected grid defined by 1-D x, y arrays."""
-    X, Y = np.meshgrid(x, y)
-    lon, lat = proj.inverse(X, Y)
-    if dx < 450:  # finer than ETOPO's best (15"): free terrain tiles with pixels at most dx/2
+    """Bedrock elevation (m) on the projected grid defined by 1-D x, y arrays: ETOPO 2022 for ice-sheet grids,
+    terrain tiles (pixels at most dx/2) for finer ones."""
+    lon, lat = proj.inverse(*np.meshgrid(x, y))
+    if dx < 2000:
         z = int(np.ceil(np.log2(2 * 156543.03 * np.cos(np.radians(lat.mean())) / dx)))
         x0, y0, z_arr = fetch_terrain(lon.min() - 0.05, lon.max() + 0.05, lat.min() - 0.05, lat.max() + 0.05, z)
         col = ((lon + 180) / 360 * 2**z - x0) * 256 - 0.5
         row = ((1 - np.arcsinh(np.tan(np.radians(lat))) / np.pi) / 2 * 2**z - y0) * 256 - 0.5
         return map_coordinates(z_arr, [row, col], order=1, mode="nearest").astype(np.float64)
-    per_deg = 240 if dx < 1000 else 120 if dx < 2000 else 60  # finer bedrock for finer grids
-    stride = max(1, int(dx / (111e3 / per_deg) / 1.5))
-    pad = 0.5
-    elon, elat, z = fetch_bed(
-        max(lon.min() - pad, -180), min(lon.max() + pad, 180),
-        max(lat.min() - pad, -90), min(lat.max() + pad, 90), stride, per_deg,
-    )
-    rows = (lat - elat[0]) / (elat[1] - elat[0])
-    cols = (lon - elon[0]) / (elon[1] - elon[0])
-    return map_coordinates(z, [rows, cols], order=1, mode="nearest")
+    elon, elat, z = fetch_bed(max(lon.min() - 0.5, -180), min(lon.max() + 0.5, 180),
+                              max(lat.min() - 0.5, -90), min(lat.max() + 0.5, 90), max(1, int(dx / 1850 / 1.5)))
+    rc = [(lat - elat[0]) / (elat[1] - elat[0]), (lon - elon[0]) / (elon[1] - elon[0])]
+    return map_coordinates(z, rc, order=1, mode="nearest")
 
 
 WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_{}.zip"
 
 
 def _worldclim(var):
-    """WorldClim 2.1 10-arc-minute grids (n, 1080, 2160) with oceans filled from the nearest land, and the ocean mask."""
+    """WorldClim 2.1 10-arc-minute grids (n, 1080, 2160) with oceans filled from the nearest land."""
     path = CACHE / "worldclim" / f"{var}.zip"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,9 +123,8 @@ def _worldclim(var):
         urllib.request.urlretrieve(WORLDCLIM.format(var), path)
     with zipfile.ZipFile(path) as z:
         a = np.stack([np.asarray(Image.open(io.BytesIO(z.read(n)))) for n in sorted(z.namelist()) if n.endswith(".tif")])
-    ocean = a[0] < -1e4  # no-data value differs per variable
-    _, (i, j) = distance_transform_edt(ocean, return_indices=True)
-    return a[:, i, j].astype(np.float64), ocean
+    _, (i, j) = distance_transform_edt(a[0] < -1e4, return_indices=True)  # no-data value differs per variable
+    return a[:, i, j].astype(np.float64)
 
 
 PRISM = "https://data.prism.oregonstate.edu/normals/us/800m/{0}/monthly/prism_{0}_us_30s_2020{1:02d}_avg_30y.zip"
@@ -183,36 +149,29 @@ def _prism(rows, cols):
     return d["T"], d["P"]
 
 
-def load_climate(proj, x, y, bed=None, shift=None):
-    """Present-day monthly temperature (°C), precipitation (mm), their reference elevation, and the ocean mask.
+# PRISM (1991-2020) minus WorldClim (1970-2000) sea-level temperature by month, averaged over Idaho (K).
+# Removed from PRISM so the LGM anomalies apply to the same baseline everywhere.
+PRISM_SHIFT = np.array([1.04, 0.09, 0.53, 0.22, 0.36, 0.14, 1.11, 0.77, 0.72, -0.33, 0.03, 0.31])
 
-    With `bed` (the 30" bedrock on this grid), PRISM's 800 m normals replace WorldClim inside the contiguous US.
+
+def load_climate(proj, x, y, bed=None):
+    """Present-day monthly temperature (°C), precipitation (mm) and their reference elevation.
+
+    With `bed` (the bedrock on this grid), PRISM's 800 m normals replace WorldClim inside the contiguous US.
     They resolve mountain snowfall that WorldClim's 18 km cells smear into the valleys.
-    Also returns the monthly PRISM-minus-WorldClim shift that was removed (None without PRISM); pass `shift`
-    to reuse one, e.g. the shift a borrowed climate correction was fitted with.
     """
     lon, lat = proj.inverse(*np.meshgrid(x, y))
     rc = [(90 - lat) * 6 - 0.5, (lon + 180) * 6 - 0.5]
-    sample = lambda a: map_coordinates(a, rc, order=1, mode="nearest")
-    T, P = (np.array([sample(m) for m in _worldclim(v)[0]]) for v in ("tavg", "prec"))
-    elev, ocean = _worldclim("elev")
-    z_ref, ocean = sample(elev[0]), map_coordinates(ocean.astype(float), rc, order=0, mode="nearest") > 0.5
+    sample = lambda a, rc: np.array([map_coordinates(m, rc, order=1, mode="nearest", cval=np.nan) for m in a])
+    T, P, z_ref = sample(_worldclim("tavg"), rc), sample(_worldclim("prec"), rc), sample(_worldclim("elev"), rc)[0]
     if bed is not None:
         r, c = (PRISM_NORTH - lat) * 120 - 0.5, (lon - PRISM_WEST) * 120 - 0.5
         rows = slice(max(int(r.min()) - 2, 0), min(int(r.max()) + 3, 3105))
         cols = slice(max(int(c.min()) - 2, 0), min(int(c.max()) + 3, 7025))
         if rows.start < rows.stop and cols.start < cols.stop:
-            PT, PP = _prism(rows, cols)
-            rc = [r - rows.start, c - cols.start]
-            pt = np.array([map_coordinates(m, rc, order=1, mode="nearest", cval=np.nan) for m in PT])
-            pp = np.array([map_coordinates(m, rc, order=1, mode="nearest", cval=np.nan) for m in PP])
+            pt, pp = (sample(a, [r - rows.start, c - cols.start]) for a in _prism(rows, cols))
             ok = np.isfinite(pt).all(0) & np.isfinite(pp).all(0)
-            # PRISM is fitted to an 800 m DEM; the 30" bedrock matches it on land.
-            # Shift its 1991-2020 temperatures to WorldClim's 1970-2000 baseline, month by month (regional
-            # sea-level means), so the LGM anomalies and calibrations apply unchanged.
-            if shift is None:
-                shift = ((pt + LAPSE * bed) - (T + LAPSE * z_ref))[:, ok].mean(1)
-            print(f"PRISM minus WorldClim baseline: {np.mean(shift):+.2f} K (removed)")
-            T = np.where(ok, pt - shift[:, None, None], T)
+            # PRISM is fitted to an 800 m DEM, which the bedrock matches on land.
+            T = np.where(ok, pt - PRISM_SHIFT[:, None, None], T)
             P, z_ref = np.where(ok, pp, P), np.where(ok, bed, z_ref)
-    return T, P, z_ref, ocean, shift
+    return T, P, z_ref

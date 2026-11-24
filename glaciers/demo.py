@@ -8,7 +8,6 @@ Run the regions first (python -m glaciers <region>) and python -m glaciers.outli
 import json
 import shutil
 import sys
-from pathlib import Path
 
 from .regions import WEB
 
@@ -20,15 +19,14 @@ def main():
     background = ["north_america"]  # coarse ice around the regions, so ice doesn't stop at their box edges
     metas = [json.loads((WEB / "data" / f"{r}.json").read_text()) for r in names + background]
     data = DOCS / "data"
-    data.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(data, ignore_errors=True)  # drop files from earlier builds
+    data.mkdir(parents=True)
     shutil.copy(WEB / "index.html", DOCS / "index.html")
     # No Mapbox token: the viewer falls back to USGS imagery, AWS Terrain Tiles and OpenFreeMap names.
     (DOCS / "config.js").write_text(f"window.MAPBOX_TOKEN = ''\nwindow.LGM_START = '{names[0]}'\n"
                                     f"window.LGM_REGIONS = {json.dumps(names)}\nwindow.LGM_BACKGROUND = {json.dumps(background)}\n")
     for r in names + background:
-        for f in (f"{r}.png", f"{r}.flow.png"):  # ice surface; surface detail (snow, bare ice, crevasses)
-            if (WEB / "data" / f).exists():
-                shutil.copy(WEB / "data" / f, data / f)
+        shutil.copy(WEB / "data" / f"{r}.png", data)
     # Coarsest first, as the viewer expects (finer regions are drawn over coarser ones).
     (data / "regions.json").write_text(json.dumps(sorted(metas, key=lambda m: -m["dx"])))
 

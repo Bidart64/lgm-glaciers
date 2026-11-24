@@ -1,101 +1,89 @@
 """Fit a smooth LGM temperature correction to the mapped ice: python -m glaciers.fit idaho [--iterations 8]
 
-The climate models' LGM cooling has the wrong regional shape over Idaho (too weak in the central ranges,
-too strong near the ice sheets), so mapped glacier extents are used to correct it, as in climate inversions
-from moraines. The correction lives on a 1° lon/lat grid of control points, so it can only shift snowlines
-region by region, not draw individual glaciers. Held-out ranges are left out of the fit and test it.
+The climate models' LGM cooling has the wrong regional shape over the Rockies (too weak in the central
+ranges, too strong near the ice sheets), so mapped glacier extents are used to correct it, as in climate
+inversions from moraines. The correction lives on a 0.5-1° lon/lat grid of control points, so it can only shift
+snowlines range by range, not draw individual glaciers. Held-out ranges are left out of the fit and test it.
+Most iterations run on coarser grids (see model.levels); the last ones on the region's own grid.
 """
 
 import argparse
 import time
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt, gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter, map_coordinates
 
 from . import model, outlines
-from .regions import correction, correction_path, setup
+from .regions import correction_path, setup
 
 HELD_OUT = {"idaho": {"Lemhi": (-113.60, -112.80, 44.00, 44.90), "Pioneer": (-114.25, -113.60, 43.50, 43.90)},
+            "lost_river": {"Pioneer": (-114.25, -113.60, 43.50, 43.90)},
             "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)},
             "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)}}
-RADIUS = 50e3      # control points compare model and mapped ice within about this distance (m)
+SPACING = {"idaho": 1.0}  # degrees between control points; single ranges use 0.5, which also fits held-out ranges better
+RADIUS = 50e3      # per degree of spacing: control points compare model and mapped ice within about this distance (m)
 GAIN = 1.0         # K of correction per e-fold of area mismatch
 MAX_STEP = 1.0     # K per iteration
 LIMITS = (-4.0, 4.0)  # about the gap between climate models and glacier-based cooling estimates
 SMOOTH = 0.5      # each iteration, blend half of the field with a smoothed copy (1 control point)
-MIN_ICE = 100.0   # km² of weighted ice before a control point responds; smaller patches are below the grid
+MIN_ICE = 100.0   # per degree² of spacing: km² of weighted ice before a control point responds
 EDGE = 60e3       # ice within this distance of an inflow edge comes from outside and is not fitted (m)
-FIT_KM = {"idaho": 1.0, "wind_river": 0.5, "sawtooth": 0.2}  # fitting grid (km); the correction itself is resolution-independent
-
-
-def save(region, lons, lats, dT, shift):
-    """The correction, plus the PRISM baseline shift it was fitted with (reused by regions that borrow it)."""
-    extra = {} if shift is None else {"shift": shift}
-    np.savez(correction_path(region), lons=lons, lats=lats, dT=dT, **extra)
-
-
-def box(lon, lat, b):
-    return (lon > b[0]) & (lon < b[1]) & (lat > b[2]) & (lat < b[3])
+SPINUP = 3000.0   # years of growth from nothing before the first iteration
+ADJUST = 375.0    # years the ice adjusts per iteration on the region's own grid (longer on coarser ones)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("region", choices=HELD_OUT)
-    p.add_argument("--iterations", type=int, default=8)
+    p.add_argument("--iterations", type=int, default=8, help="at most this many per grid")
     a = p.parse_args()
 
-    r = setup(a.region, km=FIT_KM[a.region], use_correction=False)
-    lon, lat, dx, proj = r["lon"], r["lat"], r["dx"], r["proj"]
-    mapped = outlines.rasterize(proj, r["x"], r["y"])
-    skip = np.zeros(lon.shape, bool)  # cells left out of the fit: held-out ranges and edge inflow
-    if r["H_edge"] is not None:  # ice near an inflow edge reflects the parent run, not this climate
-        inflow = np.zeros(lon.shape, bool)
-        inflow[r["H_edge"] > 0] = True
-        skip |= distance_transform_edt(~inflow) * dx < EDGE
-    for b in HELD_OUT[a.region].values():
-        skip |= box(lon, lat, b)
-
-    lons = np.arange(np.floor(lon.min()), np.ceil(lon.max()) + 1)
-    lats = np.arange(np.floor(lat.min()), np.ceil(lat.max()) + 1)
-    dT = np.zeros((len(lats), len(lons)))
-    X, Y = np.meshgrid(r["x"], r["y"])
-    weights = []  # per control point: (indices of nearby fitted cells, Gaussian weights)
-    for la in lats:
-        for lo in lons:
-            px, py = proj.forward(lo, la)
+    r = setup(a.region, use_correction=False)
+    proj, spacing = r["proj"], SPACING.get(a.region, 0.5)
+    radius, min_ice = RADIUS * spacing, MIN_ICE * spacing**2
+    lons = np.arange(np.floor(r["lon"].min()), np.ceil(r["lon"].max()) + spacing, spacing)
+    lats = np.arange(np.floor(r["lat"].min()), np.ceil(r["lat"].max()) + spacing, spacing)
+    dT, H = np.zeros((len(lats), len(lons))), None
+    for bed0, (T, P, z_ref), dx, edge in model.levels(r["bed0"], r["climate"], r["dx"], r["H_edge"]):
+        lon, lat, X, Y = (model.resample(v, bed0.shape) for v in (r["lon"], r["lat"], *np.meshgrid(r["x"], r["y"])))
+        mapped = model.resample(outlines.rasterize(proj, r["x"], r["y"]) * 1.0, bed0.shape) > 0.5
+        box = lambda b: (lon > b[0]) & (lon < b[1]) & (lat > b[2]) & (lat < b[3])
+        skip = np.zeros(bed0.shape, bool)  # cells left out of the fit: held-out ranges and edge inflow
+        for b in HELD_OUT[a.region].values():
+            skip |= box(b)
+        if edge is not None:  # ice near an inflow edge reflects the parent run, not this climate
+            skip |= distance_transform_edt(edge <= 0) * dx < EDGE
+        weights = []  # per control point: (indices of nearby fitted cells, Gaussian weights)
+        for px, py in (proj.forward(lo, la) for la in lats for lo in lons):
             d2 = (X - px) ** 2 + (Y - py) ** 2
-            k = np.flatnonzero((d2 < (3 * RADIUS) ** 2) & ~skip)
-            weights.append((k, np.exp(-d2.ravel()[k] / (2 * RADIUS**2))))
+            k = np.flatnonzero((d2 < (3 * radius) ** 2) & ~skip)
+            weights.append((k, np.exp(-d2.ravel()[k] / (2 * radius**2))))
+        overlap = lambda ice, where: (ice & mapped & where).sum() / max(((ice | mapped) & where).sum(), 1)
 
-    T0, P, z_ref, ocean = r["climate"]
-    H = None
-    for it in range(a.iterations):
-        save(a.region, lons, lats, dT, r["prism_shift"])  # correction() reads it back
-        climate = T0 + correction(a.region, lon, lat), P, z_ref, ocean
-        t0 = time.time()
-        H, _ = model.simulate(r["bed0"], climate, dx, 3000 if H is None else 1500, r["dt"], -120.0, r["H_edge"], H)
-        ice = H > 1
+        H = None if H is None else model.refine(H, coarse, bed0)
+        coarse = bed0
+        for it in range(a.iterations):
+            t0 = time.time()
+            fitted = map_coordinates(dT, [(lat - lats[0]) / spacing, (lon - lons[0]) / spacing], order=1, mode="nearest")
+            # From nothing the first time; after that the ice only has to adjust, faster on coarser grids.
+            years = SPINUP if H is None else ADJUST * dx / r["dx"]
+            H, _ = model.simulate(bed0, (T + fitted, P, z_ref), dx, years, edge, H)
+            ice = H > 1
 
-        # Update each control point from the weighted model and mapped ice areas around it.
-        cell = dx * dx / 1e6
-        step = np.zeros_like(dT)
-        for n, (k, w) in enumerate(weights):
-            am, ao = (w * ice.ravel()[k]).sum() * cell, (w * mapped.ravel()[k]).sum() * cell
-            if am + ao > MIN_ICE:
-                step.flat[n] = np.clip(GAIN * np.log((am + MIN_ICE / 2) / (ao + MIN_ICE / 2)), -MAX_STEP, MAX_STEP)
-        dT = dT + step
-        dT = np.clip((1 - SMOOTH) * dT + SMOOTH * gaussian_filter(dT, 1.0, mode="nearest"), *LIMITS)
+            # Update each control point from the weighted model and mapped ice areas around it.
+            cell, step = dx * dx / 1e6, np.zeros_like(dT)
+            for n, (k, w) in enumerate(weights):
+                am, ao = (w * ice.ravel()[k]).sum() * cell, (w * mapped.ravel()[k]).sum() * cell
+                if am + ao > min_ice:
+                    step.flat[n] = np.clip(GAIN * np.log((am + min_ice / 2) / (ao + min_ice / 2)), -MAX_STEP, MAX_STEP)
+            old, dT = dT, np.clip((1 - SMOOTH) * (dT + step) + SMOOTH * gaussian_filter(dT + step, 1.0, mode="nearest"), *LIMITS)
+            np.savez(correction_path(a.region), lons=lons, lats=lats, dT=dT)
 
-        fit = (ice & mapped & ~skip).sum() / max(((ice | mapped) & ~skip).sum(), 1)
-        line = [f"iteration {it + 1}: {time.time() - t0:.0f}s, fitted-area overlap {fit:.0%}"]
-        for name, b in HELD_OUT[a.region].items():
-            k = box(lon, lat, b)
-            line.append(f"held-out {name} {(ice & mapped & k).sum() / max(((ice | mapped) & k).sum(), 1):.0%}")
-        line.append(f"correction {dT.min():+.1f}..{dT.max():+.1f} K, largest step {np.abs(step).max():.2f} K")
-        print(", ".join(line), flush=True)
-        if np.abs(step).max() < 0.2:
-            break
-    save(a.region, lons, lats, dT, r["prism_shift"])
+            held = "".join(f", held-out {name} {overlap(ice, box(b)):.0%}" for name, b in HELD_OUT[a.region].items())
+            print(f"{dx:.0f} m grid, iteration {it + 1}: {time.time() - t0:.0f}s, fitted-area overlap {overlap(ice, ~skip):.0%}"
+                  f"{held}, correction {dT.min():+.1f}..{dT.max():+.1f} K, changed by {np.abs(dT - old).max():.2f} K", flush=True)
+            if np.abs(dT - old).max() < 0.1:
+                break
     print(f"wrote {correction_path(a.region)}; now run: python -m glaciers {a.region}")
 
 

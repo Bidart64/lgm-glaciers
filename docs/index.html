@@ -217,14 +217,14 @@
       return res.blob()
     }
 
-    // Model grids (glaciers/export.py), coarsest first, each { meta, blob: its PNG }. To save memory a region is
-    // only unpacked when a tile first needs it (one that fails is skipped), into one byte per value except the
-    // surface, which keeps its 16 bits.
+    // Model grids (glaciers/export.py), coarsest first. There can be a hundred of them, so a region's PNG is only
+    // downloaded and unpacked when a tile first needs it (one that fails is skipped): into one byte per value,
+    // except the surface, which keeps its 16 bits.
     async function load(list) {
-      regions = list.map(({ meta, blob }) => ({ ...meta, blob, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }))
+      regions = list.map(meta => ({ ...meta, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }))
     }
     async function unpack(r) {
-      const px = await pixels(r.blob), n = r.nx * r.ny
+      const px = await pixels(await download(`${cfg.data}/${r.name}.png`)), n = r.nx * r.ny
       const s = new Uint16Array(n), bands = [0, 1, 2, 3, 4, 5].map(() => new Uint8Array(n))
       for (let i = 0; i < n; i++) {
         s[i] = px[4 * i] * 256 + px[4 * i + 1]
@@ -233,7 +233,7 @@
         bands[4][i] = px[4 * (2 * n + i)]; bands[5][i] = px[4 * (2 * n + i) + 1]                  // flow lines, rebuilt ground
       }
       const [h, crev, ang, mb, phi, up] = bands
-      Object.assign(r, { s, h, crev, ang, mb, phi, up, blob: null })
+      Object.assign(r, { s, h, crev, ang, mb, phi, up })
     }
 
     // Spherical Lambert azimuthal equal-area, matching glaciers/dem.py.
@@ -460,13 +460,12 @@
     const SIZE = P.size
     const $ = id => document.getElementById(id)
 
-    // config.js may limit the regions offered (LGM_REGIONS) and add coarse ones drawn only as background
-    // around them (LGM_BACKGROUND), so ice doesn't stop at a region's box edge.
-    const listed = r => !window.LGM_REGIONS || window.LGM_REGIONS.includes(r.name)
-    const names = window.LGM_REGIONS && [...window.LGM_REGIONS, ...(window.LGM_BACKGROUND || [])]
+    // config.js may name coarse regions that are only drawn as background around the others (LGM_BACKGROUND), so
+    // that ice doesn't stop at a region's box edge; they are not offered in the list.
+    const listed = r => !(window.LGM_BACKGROUND || []).includes(r.name)
+    const title = r => r.name.replaceAll('_', ' ')
 
-    // Tiles are built by a few workers (the "tiler" script above), which are handed the region data once it
-    // has been downloaded (once, here). Each tile yields two images, its ground and its overlay, which the
+    // Tiles are built by a few workers (the "tiler" script above), which are handed the list of regions. Each tile yields two images, its ground and its overlay, which the
     // map asks for separately and takes once each.
     const source = URL.createObjectURL(new Blob([$('tiler').textContent], { type: 'text/javascript' }))
     const jobs = new Map(), tiles = new Map()
@@ -570,7 +569,7 @@
     function show(r, fly = true) {
       if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 60, bearing: 30, padding: 40, duration: current ? 2500 : 0 })
       current = r
-      $('region-name').textContent = r.name.replace('_', ' ')
+      $('region-name').textContent = title(r)
       $('details').innerHTML =
         row('Climate', `PMIP4 LGM${r.mapped ? ', tied to mapped ice' : r.corrected ? ', fitted to mapped ice' : ''}`) +
         row('Ice', `${r.ice_km2.toLocaleString()} km²`) + row('Thickest', `${r.max_ice_m.toLocaleString()} m`) +
@@ -580,21 +579,23 @@
 
     const index = fetch(`${DATA}/regions.json`).then(r => r.json())
     index.then(async all => {
-      const list = await Promise.all(all.filter(r => !names || names.includes(r.name)).map(async meta =>
-        ({ meta, blob: await (await fetch(`${DATA}/${meta.name}.png`)).blob() })))
       // What the kept tiles depend on: this page, the data (both stamped when the site is deployed) and the terrain source.
       const version = [document.lastModified, JSON.stringify(all), SIZE, !!TOKEN].join().split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)
-      const cfg = { dem: P.today.tiles, mapbox: !!TOKEN, size: SIZE, version }
-      workers.forEach(w => w.postMessage({ cfg, regions: list }))
+      const cfg = { data: DATA, dem: P.today.tiles, mapbox: !!TOKEN, size: SIZE, version }
+      workers.forEach(w => w.postMessage({ cfg, regions: all }))
     })
     index.then(all => {
       const regions = all.filter(listed), select = $('region')  // coarsest first
-      select.innerHTML = regions.map((r, i) => `<option value="${i}">${r.name.replace('_', ' ')}</option>`).join('')
+      // Listed by name; the values stay indices into `regions`, which is ordered coarsest first.
+      select.innerHTML = regions.map((r, i) => [title(r), i]).sort().map(([name, i]) => `<option value="${i}">${name}</option>`).join('')
       select.style.display = regions.length > 1 ? '' : 'none'
       select.onchange = () => show(regions[select.value])
       // A shared link opens on the finest region under its view; otherwise start on the finest region.
       const { lng, lat } = map.getCenter()
-      const here = regions.findLastIndex(r => lng > r.bounds[0] && lng < r.bounds[2] && lat > r.bounds[1] && lat < r.bounds[3])
+      // Region boxes overlap, so among the finest ones holding the view's centre, the one centred nearest to it.
+      const off = r => Math.hypot((r.bounds[0] + r.bounds[2]) / 2 - lng, (r.bounds[1] + r.bounds[3]) / 2 - lat)
+      const under = regions.filter(r => lng > r.bounds[0] && lng < r.bounds[2] && lat > r.bounds[1] && lat < r.bounds[3])
+      const here = regions.indexOf(under.sort((a, b) => a.dx - b.dx || off(a) - off(b))[0])
       const start = regions.findIndex(r => r.name === window.LGM_START)  // config.js may name a starting region
       select.value = location.hash && here >= 0 ? here : start >= 0 ? start : regions.length - 1
       show(regions[select.value], !location.hash)

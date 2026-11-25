@@ -1,9 +1,9 @@
 # LGM Glaciers
 
-Computes where glaciers should have been at the Last Glacial Maximum (~21,000 years ago) in Idaho, the
-Wind River Range and around Mount Rainier, and shows them in 3D on satellite imagery.
+Computes where glaciers should have been at the Last Glacial Maximum (~21,000 years ago) across the
+western United States and Alaska, and shows them in 3D on satellite imagery.
 
-**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges, Mount Rainier;
+**Live demo:** https://bidart64.github.io/lgm-glaciers/ (95 mountain areas from the Sierra Nevada to Glacier National Park, plus Alaska;
 no account needed)
 
 ## Run
@@ -11,20 +11,23 @@ no account needed)
 ```bash
 uv venv && uv pip install -e .                  # numpy, scipy, pillow, h5py
 python -m glaciers.outlines                     # mapped LGM extent: scores every run, and the viewer's overlay
-python -m glaciers north_america                # ~5 min: the ice sheets, which supply the ice entering Idaho
-python -m glaciers.fit idaho                    # ~2 h: fits Idaho's climate correction to the mapped ice
-python -m glaciers idaho                        # ~35 min: 500 m grid
+python -m glaciers north_america                # ~5 min: the ice sheets (the map's background, and Alaska's inflow)
+python -m glaciers.west                         # ~6 h on 8 cores: every glaciated range of the western US, 200 m grids
+python -m glaciers.names                        # peak and town names and fonts for the free viewer
 cp web/config.example.js web/config.js          # optional: a Mapbox token (Mapbox imagery, terrain, names)
 python -m http.server -d web                    # open http://localhost:8000
 ```
 
-The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawtooth`, `wind_river`, `rainier`):
+`glaciers.west` draws a box around each group of mapped glaciers (`glaciers/patches.json`, 95 patches named after
+their mountains), then fits and computes each one, several at a time within a memory budget. Only about 4% of the
+West carried mountain glaciers, so this costs far less than one grid over all of it. A patch can also be run alone,
+and Alaska is one large region:
 
 ```bash
-python -m glaciers.fit sawtooth                 # ~15 min
-python -m glaciers sawtooth                     # ~2 min
-python -m glaciers sawtooth --mapped            # instead: fill the mapped extent with ice (see below)
-python -m glaciers.names                        # peak and town names and fonts for the free viewer
+python -m glaciers.fit sawtooth_range           # ~1 h: fits the climate correction to the mapped ice
+python -m glaciers sawtooth_range               # ~5 min
+python -m glaciers sawtooth_range --mapped      # instead: fill the mapped extent with ice (see below)
+python -m glaciers.fit alaska && python -m glaciers alaska   # 1.5 km grid, joined to the ice sheet
 python -m glaciers.demo                         # standalone demo in docs/ (free map sources, GitHub Pages)
 ```
 
@@ -35,14 +38,16 @@ extent. Click the map for a point's coordinates, its elevation with the ice, and
 rotate with Ctrl+drag, Option+drag (Alt on Windows) or right-drag. The URL keeps the view, so views can be
 bookmarked and shared.
 
-The first runs download about 2.5 GB (PMIP4 climate-model output, PRISM normals, glacier outlines, terrain)
-and cache about 400 MB in `data/`.
+The first runs download several GB (PMIP4 climate-model output, PRISM normals, glacier outlines, terrain)
+and cache them in `data/` (PRISM alone is 2 GB).
 
 ## How it works
 
 1. **Bedrock** (`glaciers/dem.py`): today's terrain from AWS Terrain Tiles (10-30 m sources), resampled onto
-   an equal-area grid per region; ETOPO 2022 bedrock for the 20 km ice-sheet grid. Idaho holds its northern
-   edge at the ice-sheet run's thickness, so the Cordilleran lobes can flow in.
+   an equal-area grid per region; ETOPO 2022 bedrock for the 20 km ice-sheet grid. Alaska holds its
+   edges at the ice-sheet run's thickness, so the Cordilleran ice can flow in. The western patches have no
+   inflow: the ice-sheet lobes that reached northern Washington, Idaho and Montana are shown only by the
+   coarse North America run.
 2. **Climate** (`glaciers/dem.py`, `glaciers/pmip.py`): present-day monthly temperature and precipitation
    (PRISM 800 m normals in the contiguous US; WorldClim at 4.6 km in Canada and Alaska and at 18 km for the ice sheets) plus the LGM-minus-preindustrial change from four
    PMIP4 climate models (AWI-ESM-1-1-LR, INM-CM4-8, MIROC-ES2L, MPI-ESM1-2-LR; ensemble mean). This is the
@@ -62,15 +67,16 @@ and cache about 400 MB in `data/`.
    over the Rockies: about −6.5 °C in central Idaho, where glacier modelling implies −8.5 to −10 °C, and
    too cold near the ice sheets. So a smooth temperature correction on a 0.5-1° grid is fitted to the mapped
    ice, like climate inversions from moraines. Every iteration grows the ice from nothing, as a run does.
-   Only ice thicker than 20 m counts as glacier; thinner ice is a film on slopes above the snowline. One
-   range per region is held out of the fit to test it. The ice is therefore a reconstruction constrained
+   Only ice thicker than 20 m counts as glacier; thinner ice is a film on slopes above the snowline. Part
+   of each region is held out of the fit to test it: one in five quarter-degree squares, or a named range
+   in Alaska. Ranges with under 500 km² of mapped ice are too small for that and hold nothing out. The ice is therefore a reconstruction constrained
    by field evidence, not a pure prediction.
 6. **Export** (`glaciers/export.py`): one small PNG per region with the ice surface (smoothed over 1.5
    cells: ice cannot hold bumps much smaller than its thickness), thickness, mass balance, crevassing and
    flow lines (`web/data/<region>.png` plus `.json`).
 7. **Viewer** (`web/index.html`, MapLibre): for each map tile, web workers take present-day terrain (~10 m
    in the US), raise it to the computed ice surface wherever the ice buries it, and draw that as 3D terrain
-   with a painted ice overlay. The model runs at 200-500 m, but ice margins, nunataks and valley glaciers
+   with a painted ice overlay. The model runs at 200 m, but ice margins, nunataks and valley glaciers
    appear at terrain resolution: thick ice is flat across a valley, thin ice follows the fine terrain and
    stays off slopes too steep to hold it. The ice is lit from its own surface and painted from the model:
    snow above the snowline, bare blue ice below it, bands along the flow lines, crevasses where the ice
@@ -82,37 +88,60 @@ and cache about 400 MB in `data/`.
 
 ## Results and limitations
 
-| Region | Grid | Computed ice | Mapped ice | Overlap | Held-out range |
+| Region | Grid | Computed ice | Mapped ice | Overlap | Held-out part |
 |---|---|---|---|---|---|
 | North America (no correction) | 20 km | 16.7M km² | 18.6M km² | 84% | – |
-| Idaho | 500 m | 160,000 km² | 147,000 km² | 62% | Lemhi Range 28%, Pioneer Mountains 64% |
-| Sawtooth Range | 200 m | 3,800 km² | 5,300 km² | 60% | White Clouds 68% |
-| Lost River Range | 200 m | 3,400 km² | 4,000 km² | 47% | Pioneer Mountains 68% |
-| Wind River Range | 200 m | 10,100 km² | 9,800 km² | 71% | East-side valleys 46% |
-| Mount Rainier | 200 m | 4,800 km² | 1,700 km² (valley tongues only) | 35% below 1,100 m | Goat Rocks 68% |
+| Alaska | 1.5 km | 642,000 km² | 657,000 km² | 64% | Central Brooks Range 15% |
+| Western US, 95 patches together | 200 m | 144,800 km² | 138,200 km² | 52% (weighted by mapped ice) | – |
+| Yellowstone and Wind River | 200 m | 43,700 km² | 39,400 km² | 69% | 71% |
+| Sierra Nevada | 200 m | 14,400 km² | 15,300 km² | 66% | 71% |
+| Sawtooth Range | 200 m | 9,700 km² | 10,300 km² | 60% | 57% |
+| Uinta Mountains | 200 m | 3,600 km² | 3,200 km² | 59% | 63% |
+| San Juan Mountains | 200 m | 9,800 km² | 9,500 km² | 57% | 48% |
+| Central Colorado | 200 m | 8,100 km² | 8,200 km² | 52% | 50% |
+| Oregon Cascades | 200 m | 6,900 km² | 7,900 km² | 45% | 39% |
+| Lost River Range | 200 m | 3,200 km² | 3,600 km² | 45% | 29% |
+| Olympic Mountains | 200 m | 2,000 km² | 1,200 km² (valley tongues only) | 33% below 1,100 m | 45% |
+| Mount Rainier | 200 m | 4,800 km² | 2,200 km² (valley tongues only) | 29% below 1,100 m | 22% |
+| Bitterroot Range | 200 m | 17,800 km² | 14,400 km² | 23% | 21% |
+| Central Cascades | 200 m | 3,300 km² | 1,900 km² (valley tongues only) | 21% below 1,100 m | 34% |
 
-For comparison, a published model of the Alps at the LGM reaches about 72% at best, and automated
-reconstructions average about 48%.
+Overlap is intersection ÷ union of computed and mapped ice; the held-out part is one in five quarter-degree
+squares, left out of the fit. Every patch's numbers are in `web/data/<patch>.json` and in the viewer's panel.
 
-- Idaho's overlap is 74% north of 47°N, where the ice-sheet lobes are, and 42% in the mountain ranges to
-  the south; the 200 m runs of single ranges do better there.
-- The overlap is partly a fit: the correction was chosen using the mapped outlines. The held-out ranges
+- The overlap is partly a fit: the correction was chosen using the mapped outlines. The held-out squares
   are the independent test.
+- **The evidence differs from place to place**, and the scores with it:
+  - In Washington's Cascades and Olympics the outlines draw only the valley tongues, not the high ground
+    they flowed from, so fits and scores there use ground below 1,100 m only. The model also puts ice on
+    the ridges between the tongues.
+  - The ice-sheet outline counts as evidence only south of 46.5°N and east of 120°W, where it shows the
+    mountain ice of central Idaho and Yellowstone. Further west it covers the Cascades whole.
+  - Many small ranges are drawn as rough blobs marking that ice existed, not as glacier outlines. The
+    model's glaciers can sit on the high ground beside a blob and score 0%. For the 68 patches with under
+    500 km² of mapped ice (8,000 km² in all, against 5,900 km² computed), compare areas, not overlap.
+- **No ice sheet in the patches.** North of about 46.5°N the Cordilleran ice sheet flowed in from Canada;
+  the patches have no inflow, so the Bitterroot patch and those near the border show local glaciers only
+  (hence its 23%), and nothing is patched north of 48.3°N, where the mountain-glacier outlines stop. The
+  coarse North America run shows the ice sheet there.
+- **Patch edges.** Each box reaches 10 km past its mapped ice. Where the computed ice grows further, it is
+  cut off along the edge of the box in a straight line (north of Mount Rainier, for instance).
+- About a dozen small, dry ranges (mostly in the Great Basin) reach the fit's limit of 4 °C of extra
+  cooling and still grow little or no ice: 10 patches end with under 1 km².
 - Ice thickness is not constrained by the mapped outlines. The model buries most of the Sawtooths and the
   Wind Rivers under ice more than 1 km thick. Field studies do describe a plateau ice cap with piedmont
   lobes on the Wind Rivers, and Sawtooth lobes reaching up to 20 km into Stanley Basin, but give no
   thickness to check against.
 - **Mount Rainier** stands at its pre-collapse height: a cone is put back on today's summit up to about
-  4,900 m (3.4 km³ of rock), in the model and in the 3D view. Around Rainier the outlines draw only the
-  valley tongues: nothing on the mountain itself, which still carries glaciers, nor on slopes above the
-  ice-age snowline. So the fit and the score use ground below 1,100 m only, where the model covers 73% of
-  the mapped tongues but also puts ice on the ridges between them. The ice-sheet outline is not used there
-  (it covers the Cascades whole), and the Puget lobe of the ice sheet, which reached the north-west corner
-  a few thousand years later, is not modelled.
-- Where a basin is close to filling with ice the result is sensitive: in the Sawtooths a few tenths of a
-  degree, or 10,000 years instead of 3,000, turn valley glaciers into an ice cap over the whole area.
+  4,900 m (3.4 km³ of rock), in the model and in the 3D view. The Puget lobe of the ice sheet, which
+  reached the area a few thousand years later, is not modelled.
+- Where a basin is close to filling with ice the result is sensitive: a few tenths of a degree turn valley
+  glaciers into an ice cap over the whole area. The fit then swings between the two; steps that reverse are
+  halved, which did not settle the Central Cascades (repeated fits ended anywhere between 2,400 and
+  8,200 km²), the least reliable of the large patches.
+- Alaska's fit had not settled when it was stopped, and its held-out Brooks Range is poorly matched.
 - **Mapped mode** (`--mapped`) gives up on prediction: ice is 4 °C colder inside the mapped extent and
-  cannot survive outside it, so it fills the outlines (87-95% overlap for the three ranges) and only its
+  cannot survive outside it, so it fills the outlines (about 90% overlap in the ranges tried) and only its
   thickness and flow are computed. It is thicker still, for the same reason.
 - The ice-sheet climate is partly circular: the PMIP4 models were run with prescribed LGM ice sheets.
 - Earlier versions of this model held the thickness-wave part of the flow fixed during each time step.

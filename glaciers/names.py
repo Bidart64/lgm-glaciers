@@ -1,4 +1,4 @@
-"""Peak and town names for the free viewer, from GeoNames: python -m glaciers.names [region ...]
+"""Peak and town names for the free viewer, from GeoNames: python -m glaciers.names [region ...]  (default: every computed region)
 
 Writes web/data/names.geojson and the label fonts in web/fonts/. The viewer loads both from its own site rather
 than from a map service, which content blockers may block. Run the regions first.
@@ -12,7 +12,7 @@ import urllib.request
 import zipfile
 
 from .dem import CACHE
-from .regions import REGIONS, WEB
+from .regions import WEB
 
 GEONAMES = "https://download.geonames.org/export/dump/{}.zip"  # one tab-separated table per country (CC BY 4.0)
 COUNTRIES = "US", "CA"
@@ -28,8 +28,8 @@ def get(url):
 
 
 def main():
-    boxes = [json.loads((WEB / "data" / f"{r}.json").read_text())["bounds"]
-             for r in sys.argv[1:] or [r for r in REGIONS if r != "north_america"]]
+    done = [p.stem for p in (WEB / "data").glob("*.json") if p.stem not in ("regions", "north_america")]
+    boxes = [json.loads((WEB / "data" / f"{r}.json").read_text())["bounds"] for r in sys.argv[1:] or done]
     features = []
     for country in COUNTRIES:
         path = CACHE / "geonames" / f"{country}.zip"

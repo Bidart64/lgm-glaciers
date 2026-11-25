@@ -1,4 +1,3 @@
 window.MAPBOX_TOKEN = ''
-window.LGM_START = 'lost_river'
-window.LGM_REGIONS = ["lost_river", "idaho", "wind_river", "sawtooth", "rainier"]
+window.LGM_START = 'lost_river_range'
 window.LGM_BACKGROUND = ["north_america"]

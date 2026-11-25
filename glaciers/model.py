@@ -8,6 +8,8 @@ Arrays are (rows, columns) with row 0 in the south and column 0 in the west. Len
 years, temperatures °C, precipitation mm per month.
 """
 
+import sys
+
 import numpy as np
 from scipy import sparse
 from scipy.ndimage import gaussian_filter, map_coordinates, uniform_filter
@@ -93,7 +95,10 @@ def simulate(bed0, climate, dx, years, H_edge=None, H0=None):
     bed = bed0 - RHO_I / RHO_M * H  # bedrock floats on the mantle: it sinks by about 28% of the ice thickness
     ny, nx = H.shape
     dt = min(dx / STEP_SPEED, MAX_STEP)
-    for _ in range(int(years / dt)):
+    steps = int(years / dt)
+    for step in range(steps):
+        if sys.stderr.isatty() and step % max(steps // 200, 1) == 0:  # a progress bar, when run in a terminal
+            sys.stderr.write(f"\r{dx:6.0f} m grid [{'#' * (30 * step // steps):30}] {step / steps:4.0%}")
         s = np.maximum(bed + H, SEA_LEVEL)
         M = mass_balance(s, *climate)
         melt = np.maximum(M, -H / dt)  # in the solve, melt only the ice that is there; the rest comes after
@@ -125,6 +130,8 @@ def simulate(bed0, climate, dx, years, H_edge=None, H0=None):
         H[bed < SEA_LEVEL - MAX_WATER] = 0.0  # ice calves away over deep water
         H[edge] = 0.0 if H_edge is None else H_edge[edge]
         bed += dt / TAU_ISO * (bed0 - RHO_I / RHO_M * H - bed)  # the bed creeps towards floating balance
+    if sys.stderr.isatty():
+        sys.stderr.write("\r" + " " * 50 + "\r")  # clear the bar
     return H, bed
 
 

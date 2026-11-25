@@ -1,5 +1,6 @@
 """Model regions and their inputs: bedrock, LGM climate (with any fitted correction) and edge ice."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -10,29 +11,31 @@ from . import dem, export, outlines, pmip
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 # name: (centre lon, centre lat, half-width km, half-height km, grid km, years)
-# Mountain glaciers settle within 3,000 years; the ice-sheet lobes entering Idaho take far longer.
+# Mountain glaciers settle within 3,000 years; ice-sheet lobes take far longer.
 REGIONS = {
     "north_america": (-95.0, 58.0, 3300, 2600, 20, 40000),
-    "idaho":         (-114.2, 45.6, 320, 440, 0.5, 15000),
-    "lost_river":    (-113.65, 44.05, 45, 65, 0.2, 3000),
-    "wind_river":    (-109.55, 42.95, 75, 95, 0.2, 3000),
-    "sawtooth":      (-114.95, 44.10, 40, 50, 0.2, 3000),
-    "rainier":       (-121.80, 46.80, 60, 50, 0.2, 3000),
     "alaska":        (-151.0, 63.0, 850, 650, 1.5, 15000),
 }
-# Nested regions take ice flowing in across their edges from a coarser run: (run, which edges). Idaho takes
-# the Cordilleran lobes entering from British Columbia across its northern edge only, because the coarse run
-# over-glaciates the lowlands along the others. Alaska is joined to the ice sheet along its eastern side.
-PARENT = {"idaho": ("north_america", "north"), "alaska": ("north_america", "all")}
+# The western United States is covered patch by patch: one 200 m region around each group of mapped mountain
+# glaciers (python -m glaciers.west draws them up), rather than one grid over ground that was mostly ice-free.
+PATCHES = Path(__file__).with_name("patches.json")
+if PATCHES.exists():
+    REGIONS.update({name: (*box, 0.2, 3000) for name, box in json.loads(PATCHES.read_text()).items()})
+PATCH_NAMES = set(REGIONS) - {"north_america", "alaska"}
+# In the patches the ice-sheet outline (Batchelor) counts as evidence only east of this longitude and south of this
+# latitude, where it shows the mountain ice of central Idaho and Yellowstone. Further west it covers the Cascades
+# whole; further north it is the Cordilleran ice sheet, which flowed in from Canada and which no patch can grow.
+SHEETS = -120.0, 46.5
+# Regions that take ice flowing in across their edges from a coarser run: Alaska is joined to the ice sheet.
+PARENT = {"alaska": "north_america"}
 # Mountains as they stood at the LGM: (summit lon, lat, height m, slope of the cone put back on top). Rainier lost
 # its top to the Osceola collapse 5,600 years ago; before that it is thought to have reached about 4,900 m.
-REBUILT = {"rainier": (-121.7603, 46.8523, 4900.0, 0.7)}
-# Regions scored against the mountain-glacier outlines only: the ice-sheet outline covers the Cascades whole.
-NO_SHEETS = {"rainier"}
-# Elevation (m) above which the outlines say nothing: around Rainier they draw only the valley tongues, and leave
-# blank both the mountain itself, which still carries glaciers, and the slopes above the ice-age snowline.
-# Ground above it is left out of fits and scores.
-UNMAPPED_ABOVE = {"rainier": 1100.0}
+REBUILT = [(-121.7603, 46.8523, 4900.0, 0.7)]
+# Where the outlines say nothing: (west, east, south, north, above this elevation m). In Washington's Cascades
+# and Olympics they draw only the valley tongues (the share of ground mapped as ice falls with height there, where
+# in Oregon and the Sierra it rises), and leave blank the high ground the tongues flowed from. Such ground is left
+# out of fits and scores.
+UNMAPPED = [(-125.0, -120.0, 45.8, 49.5, 1100.0)]
 
 MAPPED = -4.0, 20.0   # K added inside and outside the mapped ice in mapped mode: ice fills the outlines (more
                       # cooling adds little) and none survives outside
@@ -79,13 +82,14 @@ def setup(region, use_correction=True, mapped=False):
     # The ground, and today's climate on it (fine grids get the finer climate data).
     bed0 = dem.load_bed(proj, x, y, dx)
     T, P, z_ref = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)
-    known = bed0 < UNMAPPED_ABOVE.get(region, np.inf)  # where the outlines can be compared with
+    away = lambda lon_p, lat_p: np.hypot(*np.subtract((X, Y), np.reshape(proj.forward(lon_p, lat_p), (2, 1, 1))))  # m
+    known = np.ones(bed0.shape, bool)  # where the outlines can be compared with
+    for west, east, south, north, above in UNMAPPED:
+        known &= (lon < west) | (lon > east) | (lat < south) | (lat > north) | (bed0 < above)
     rebuilt = np.zeros_like(bed0)  # height put back on top of today's ground (m)
-    if region in REBUILT:  # a cone over the summit, wherever it stands above today's ground
-        lon_s, lat_s, top, slope = REBUILT[region]
-        x_s, y_s = proj.forward(lon_s, lat_s)
-        rebuilt = np.maximum(top - slope * np.hypot(X - x_s, Y - y_s) - bed0, 0)
-        bed0 = bed0 + rebuilt
+    for lon_p, lat_p, top, slope in REBUILT:  # a cone over the summit, wherever it stands above today's ground
+        rebuilt = np.maximum(rebuilt, top - slope * away(lon_p, lat_p) - bed0)
+    bed0 = bed0 + rebuilt
 
     # The ice-age climate: today's, plus the climate models' change, plus this region's fitted correction.
     lgm_dT, ratio = pmip.sample(lon, lat)
@@ -94,20 +98,19 @@ def setup(region, use_correction=True, mapped=False):
 
     # The field evidence on this grid and, in mapped mode, the climate bent to it: colder inside the mapped ice
     # (building up over MARGIN from its outline), far too warm for ice outside.
-    evidence = outlines.rasterize(proj, x, y, region not in NO_SHEETS)
+    # (For the patches, the mountain-glacier outlines only: the ice-sheet outline covers the Cascades whole.)
+    evidence = outlines.rasterize(proj, x, y)
+    if region in PATCH_NAMES:  # the western patches use the ice-sheet outline only where it shows mountain ice
+        evidence = outlines.rasterize(proj, x, y, sheets=False) | evidence & (lon > SHEETS[0]) & (lat < SHEETS[1])
     if mapped:
         inside = np.minimum(distance_transform_edt(evidence) * dx / MARGIN, 1)
         climate = climate[0] + np.where(inside > 0, MAPPED[0] * inside, MAPPED[1]), *climate[1:]
 
-    # Ice entering from a coarser run: its thickness along this region's edges (only the outermost cells are
-    # used), or along the northern edge alone, which is the last row.
+    # Ice entering from a coarser run: its thickness along this region's edges (only the outermost cells are used).
     H_edge = None
     if region in PARENT:
-        parent, edges = PARENT[region]
-        s, ice = export.read(WEB, parent, lon, lat)
+        s, ice = export.read(WEB, PARENT[region], lon, lat)
         H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
-        if edges == "north":
-            H_edge[:-1] = 0
     return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, rebuilt=rebuilt, climate=climate,
                 natural=natural, mapped=evidence, known=known, H_edge=H_edge, years=years,
                 corrected=bool(np.any(fitted)))

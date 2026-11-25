@@ -134,21 +134,25 @@ PRISM_WEST, PRISM_NORTH = -125.0208333, 49.9375  # corner of the 30" grid (7025 
 
 
 def _prism(rows, cols):
-    """PRISM 1991-2020 monthly normals (tmean °C, ppt mm), each (12, rows, cols) for a window of the grid; NaN off land.
-    Each month is about 58 MB; only the window is cached."""
-    path = CACHE / f"prism_{rows.start}_{rows.stop}_{cols.start}_{cols.stop}.npz"
-    if not path.exists():
-        def month(args):
-            var, m = args
-            with zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(PRISM.format(var, m), timeout=600).read())) as z:
-                a = np.asarray(Image.open(io.BytesIO(z.read(next(n for n in z.namelist() if n.endswith(".tif"))))))
-            return np.where(a[rows, cols] < -9000, np.nan, a[rows, cols])
-        print("downloading PRISM 800 m climate normals (24 x ~58 MB)")
-        with ThreadPoolExecutor(6) as pool:
-            a = np.array(list(pool.map(month, [(v, m) for v in ("tmean", "ppt") for m in range(1, 13)])))
-        np.savez_compressed(path, T=a[:12], P=a[12:])
-    d = np.load(path)
-    return d["T"], d["P"]
+    """PRISM 1991-2020 monthly normals (tmean °C, ppt mm), each (12, rows, cols) for a window of the grid; NaN off
+    land. The whole grid is downloaded once (24 files of about 58 MB) and kept as two arrays on disk, 1 GB each."""
+    out = []
+    for var in ("tmean", "ppt"):
+        path = CACHE / "prism" / f"{var}.npy"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"downloading PRISM 800 m {var} normals (12 x ~58 MB)")
+            def month(m):
+                with zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(PRISM.format(var, m), timeout=600).read())) as z:
+                    return np.asarray(Image.open(io.BytesIO(z.read(next(n for n in z.namelist() if n.endswith(".tif"))))))
+            with ThreadPoolExecutor(6) as pool:
+                months = list(pool.map(month, range(1, 13)))
+            part = path.with_suffix(".part.npy")  # written under another name, so a half-written file is never used
+            np.save(part, np.array(months, np.float32))
+            part.rename(path)
+        a = np.load(path, mmap_mode="r")[:, rows, cols].astype(np.float64)
+        out.append(np.where(a < -9000, np.nan, a))
+    return out
 
 
 # PRISM (1991-2020) minus WorldClim (1970-2000) sea-level temperature by month, averaged over Idaho (K).

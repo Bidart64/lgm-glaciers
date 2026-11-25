@@ -1,0 +1,572 @@
+{
+ "bitterroot_range": [
+  -114.59,
+  46.53,
+  148,
+  197
+ ],
+ "yellowstone_and_wind_river": [
+  -110.5,
+  44.12,
+  141,
+  183
+ ],
+ "sierra_nevada": [
+  -119.56,
+  38.07,
+  128,
+  211
+ ],
+ "central_colorado": [
+  -106.44,
+  39.57,
+  90,
+  151
+ ],
+ "san_juan_mountains": [
+  -107.07,
+  37.42,
+  106,
+  127
+ ],
+ "oregon_cascades": [
+  -121.97,
+  43.92,
+  53,
+  201
+ ],
+ "sawtooth_range": [
+  -114.61,
+  44.01,
+  86,
+  71
+ ],
+ "garnet_range": [
+  -112.53,
+  46.78,
+  68,
+  72
+ ],
+ "mount_rainier": [
+  -121.67,
+  46.54,
+  58,
+  67
+ ],
+ "wasatch_range": [
+  -111.74,
+  40.92,
+  32,
+  129
+ ],
+ "central_cascades": [
+  -121.1,
+  47.68,
+  50,
+  69
+ ],
+ "uinta_mountains": [
+  -110.45,
+  40.72,
+  74,
+  47
+ ],
+ "klamath_mountains": [
+  -122.94,
+  41.29,
+  56,
+  62
+ ],
+ "lost_river_range": [
+  -113.5,
+  44.15,
+  55,
+  51
+ ],
+ "olympic_mountains": [
+  -123.6,
+  47.74,
+  50,
+  47
+ ],
+ "lassen_peak": [
+  -121.45,
+  40.36,
+  37,
+  63
+ ],
+ "taos_mountains": [
+  -105.3,
+  36.77,
+  27,
+  75
+ ],
+ "ruby_mountains": [
+  -115.32,
+  40.62,
+  29,
+  58
+ ],
+ "bitterroot_mountains": [
+  -115.1,
+  47.78,
+  30,
+  49
+ ],
+ "caribou_range": [
+  -111.06,
+  43.01,
+  33,
+  48
+ ],
+ "bighorn_mountains": [
+  -107.26,
+  44.39,
+  34,
+  42
+ ],
+ "wallowa_mountains": [
+  -117.31,
+  45.25,
+  37,
+  37
+ ],
+ "north_hills": [
+  -113.87,
+  47.24,
+  21,
+  54
+ ],
+ "white_hills": [
+  -111.67,
+  38.78,
+  38,
+  34
+ ],
+ "tendoy_mountains": [
+  -112.99,
+  44.66,
+  22,
+  43
+ ],
+ "santa_fe_mountains": [
+  -105.68,
+  36.0,
+  26,
+  41
+ ],
+ "park_range": [
+  -106.69,
+  40.72,
+  22,
+  45
+ ],
+ "the_seven_hermits": [
+  -107.22,
+  39.91,
+  24,
+  39
+ ],
+ "shoshone_mountains": [
+  -117.29,
+  39.06,
+  24,
+  38
+ ],
+ "the_three_brothers": [
+  -111.36,
+  38.24,
+  25,
+  36
+ ],
+ "the_redlands": [
+  -107.91,
+  39.15,
+  31,
+  28
+ ],
+ "crazy_mountains": [
+  -110.31,
+  46.1,
+  21,
+  32
+ ],
+ "tobacco_root_mountains": [
+  -112.0,
+  45.59,
+  22,
+  31
+ ],
+ "strawberry_range": [
+  -118.67,
+  44.18,
+  24,
+  29
+ ],
+ "san_pitch_mountains": [
+  -111.32,
+  39.4,
+  19,
+  36
+ ],
+ "gray_hills": [
+  -112.24,
+  38.51,
+  25,
+  28
+ ],
+ "wyoming_range": [
+  -110.48,
+  42.55,
+  19,
+  35
+ ],
+ "sangre_de_cristo_range": [
+  -105.65,
+  38.09,
+  22,
+  31
+ ],
+ "grave_creek_range": [
+  -114.5,
+  47.18,
+  23,
+  25
+ ],
+ "siskiyou_mountains": [
+  -123.65,
+  41.75,
+  20,
+  31
+ ],
+ "mount_shasta": [
+  -122.11,
+  41.47,
+  21,
+  26
+ ],
+ "snowy_range": [
+  -106.31,
+  41.37,
+  23,
+  24
+ ],
+ "portneuf_range": [
+  -112.16,
+  42.62,
+  23,
+  23
+ ],
+ "church_mountains": [
+  -112.14,
+  39.06,
+  18,
+  32
+ ],
+ "black_mountains": [
+  -112.79,
+  37.8,
+  21,
+  27
+ ],
+ "white_mountains": [
+  -118.31,
+  37.56,
+  19,
+  29
+ ],
+ "the_seven_devils": [
+  -116.55,
+  45.33,
+  17,
+  28
+ ],
+ "duck_creek_range": [
+  -114.69,
+  39.42,
+  20,
+  25
+ ],
+ "west_mountains": [
+  -116.12,
+  44.32,
+  15,
+  32
+ ],
+ "sheepshead_mountains": [
+  -118.62,
+  42.7,
+  17,
+  23
+ ],
+ "snowy_range_2": [
+  -105.91,
+  41.17,
+  16,
+  24
+ ],
+ "klamath_mountains_2": [
+  -123.13,
+  41.95,
+  24,
+  15
+ ],
+ "big_belt_mountains": [
+  -111.26,
+  46.5,
+  16,
+  21
+ ],
+ "jim_sage_mountains": [
+  -113.58,
+  42.18,
+  15,
+  21
+ ],
+ "sierra_madre": [
+  -107.05,
+  41.19,
+  16,
+  19
+ ],
+ "red_hills": [
+  -114.33,
+  38.99,
+  15,
+  19
+ ],
+ "highland_mountains": [
+  -112.4,
+  45.74,
+  14,
+  18
+ ],
+ "raft_river_mountains": [
+  -113.36,
+  41.89,
+  19,
+  15
+ ],
+ "salmon_river_mountains": [
+  -114.3,
+  44.59,
+  13,
+  19
+ ],
+ "wassuk_range": [
+  -118.87,
+  38.48,
+  15,
+  18
+ ],
+ "basaltic_hills": [
+  -105.47,
+  37.6,
+  15,
+  18
+ ],
+ "high_rock_canyon_hills": [
+  -118.99,
+  41.52,
+  13,
+  21
+ ],
+ "bridger_range": [
+  -110.98,
+  45.88,
+  13,
+  18
+ ],
+ "lead_mine_hills": [
+  -114.25,
+  40.67,
+  13,
+  19
+ ],
+ "jarbidge_mountains": [
+  -115.42,
+  41.84,
+  15,
+  16
+ ],
+ "warner_mountains": [
+  -120.23,
+  41.36,
+  13,
+  18
+ ],
+ "hagerhorst_mountains": [
+  -120.82,
+  42.52,
+  14,
+  16
+ ],
+ "bone_mountains": [
+  -115.97,
+  41.52,
+  13,
+  16
+ ],
+ "la_sal_mountains": [
+  -109.24,
+  38.47,
+  13,
+  17
+ ],
+ "boynton_tank": [
+  -111.67,
+  35.34,
+  14,
+  16
+ ],
+ "selkirk_mountains": [
+  -116.74,
+  48.48,
+  11,
+  16
+ ],
+ "tendoy_mountains_2": [
+  -112.58,
+  44.54,
+  12,
+  16
+ ],
+ "san_mateo_mountains": [
+  -107.56,
+  35.24,
+  15,
+  14
+ ],
+ "little_belt_mountains": [
+  -110.58,
+  46.97,
+  11,
+  15
+ ],
+ "bear_river_range": [
+  -111.64,
+  42.39,
+  12,
+  15
+ ],
+ "rocky_hills": [
+  -112.68,
+  45.01,
+  10,
+  17
+ ],
+ "ruby_range": [
+  -112.25,
+  45.29,
+  11,
+  15
+ ],
+ "hoodoo_hills": [
+  -122.76,
+  39.38,
+  13,
+  14
+ ],
+ "san_bernardino_mountains": [
+  -116.86,
+  34.12,
+  13,
+  14
+ ],
+ "rabbit_ears_range": [
+  -106.17,
+  40.35,
+  13,
+  13
+ ],
+ "stansbury_mountains": [
+  -112.62,
+  40.49,
+  11,
+  15
+ ],
+ "oquirrh_mountains": [
+  -112.2,
+  40.41,
+  11,
+  15
+ ],
+ "snake_range": [
+  -114.26,
+  39.29,
+  11,
+  15
+ ],
+ "sierra_de_los_valles": [
+  -106.56,
+  35.88,
+  11,
+  14
+ ],
+ "deep_creek_range": [
+  -113.91,
+  39.83,
+  12,
+  13
+ ],
+ "santa_rosa_range": [
+  -117.66,
+  41.54,
+  9,
+  16
+ ],
+ "hoodoo_hills_2": [
+  -123.06,
+  39.93,
+  11,
+  13
+ ],
+ "hoodoo_hills_3": [
+  -122.82,
+  39.69,
+  11,
+  13
+ ],
+ "sangre_de_cristo_range_2": [
+  -105.94,
+  38.39,
+  11,
+  13
+ ],
+ "cochetopa_hills": [
+  -106.42,
+  38.3,
+  11,
+  12
+ ],
+ "connley_hills": [
+  -121.36,
+  42.95,
+  9,
+  13
+ ],
+ "bald_hills": [
+  -120.8,
+  40.48,
+  9,
+  12
+ ],
+ "coleman_hills": [
+  -120.15,
+  42.31,
+  10,
+  11
+ ],
+ "castle_mountains": [
+  -110.74,
+  46.49,
+  8,
+  11
+ ],
+ "paulina_mountains": [
+  -121.25,
+  43.69,
+  8,
+  11
+ ]
+}

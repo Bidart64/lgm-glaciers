@@ -72,7 +72,7 @@ and cache about 400 MB in `data/`.
    appear at terrain resolution: thick ice is flat across a valley, thin ice follows the fine terrain and
    stays off slopes too steep to hold it. The ice is lit from its own surface and painted from the model:
    snow above the snowline, bare blue ice below it, bands along the flow lines, crevasses where the ice
-   stretches, debris towards the snouts, and perennial snow on ice-free ground above the snowline.
+   stretches, bergschrunds under steep headwalls, debris towards the snouts, and perennial snow on ice-free ground above the snowline.
 8. **Validation** (`glaciers/outlines.py`): mapped LGM extent from field evidence, from Batchelor et al. 2019
    for the ice sheets and GLACIMONTIS (Lima et al. 2026) for mountain glaciers. Each run reports the
    overlap between computed and mapped ice (intersection ÷ union), and the viewer can draw the mapped

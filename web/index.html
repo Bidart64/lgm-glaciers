@@ -233,6 +233,7 @@
     const MIN_ICE = 8     // m: thinner ice is not drawn
     const VENEER = 30     // m: ice up to this thin follows the fine terrain instead of a flat surface
     const CELL = 50       // m: spacing of crevasses
+    const SCHRUND = 40    // m: ice thickness at a bergschrund
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
     async function tile(z, x, y) {
       const px = await pixels(await download(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y)))
@@ -281,7 +282,7 @@
         }
       }
       // Pass 2: paint the ice, lit by its own surface so its shape shows: snow above the snowline, bare blue
-      // ice below, flow bands and moraines along the flow lines, crevasses where the ice stretches, debris
+      // ice below, flow bands and moraines along the flow lines, crevasses where the ice stretches, bergschrunds, debris
       // towards the snouts. Ice-free ground above the snowline carries perennial snow.
       const showFine = clamp((25 - mpp) / 15)  // crevasses only where they can be resolved
       const unit = 40075016 * 0.72 / (n * SIZE)
@@ -324,6 +325,13 @@
             }
             tint(DEEP, depth * (0.5 + 0.5 * cv) * showFine)
           }
+          // Bergschrund: the crack where a glacier pulls away from the thin ice left on its headwall (and from
+          // steep side walls), drawn where the model's thickness passes SCHRUND on steep, snow-covered ground.
+          const i0 = i - (col > 0), i1 = i + (col < SIZE - 1), j0 = i - (row > 0) * SIZE, j1 = i + (row < SIZE - 1) * SIZE
+          const thinning = Math.hypot((m[i1 * F + 1] - m[i0 * F + 1]) / (i1 - i0), (m[j1 * F + 1] - m[j0 * F + 1]) * SIZE / (j1 - j0)) / mpp
+          const gap = Math.abs(hm - SCHRUND) / Math.max(thinning, 1e-3)  // metres from that line
+          tint(DEEP, snow * showFine * clamp((Math.hypot(gx, gy) - 0.25) / 0.2) * clamp(1.5 - gap / Math.max(3, 0.7 * mpp))
+                     * clamp(3 * noise(X / 90, Y / 90) - 0.3))
           // Sun from the north-west, 40° up; the gentle relief of ice is exaggerated so it reads. Shadows on
           // snow and ice are blue: they are lit by the sky.
           const Z = 2.5, lit = Math.max(0, (0.54 * gx * Z - 0.54 * gy * Z + 0.64) / Math.sqrt((gx * gx + gy * gy) * Z * Z + 1)) / 0.64

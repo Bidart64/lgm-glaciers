@@ -51,7 +51,10 @@
     .detail-key { font-size: 0.8125rem; color: var(--text-muted); }
     .detail-value { font-size: 0.875rem; font-weight: 500; text-align: right; }
     .note { margin-top: 0.75rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
-    .note a { color: var(--accent); }
+    .info-panel.hidden { display: none; }
+    .sources { display: inline-flex; align-items: center; gap: 0.45rem; margin-top: 0.9rem; padding: 0.4rem 0.85rem; border-radius: 10px;
+               border: 1px solid var(--overlay-border); color: var(--text); font-size: 0.85rem; text-decoration: none; transition: all 0.2s; }
+    .sources:hover { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.04); }
     .compass { position: absolute; right: 1.5rem; bottom: 2.4rem; width: 84px; padding: 0.5rem 0.5rem 0.4rem;
                display: flex; flex-direction: column; align-items: center; cursor: pointer; color: var(--text); }
     .compass svg { width: 64px; height: 64px; transition: transform 0.1s linear; }
@@ -105,6 +108,11 @@
         <path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>
       </svg>
     </button>
+    <button class="control-btn on" id="info" title="Region details and sources">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5v.5"/>
+      </svg>
+    </button>
     <button class="control-btn" id="mapped" title="Mapped LGM extent (field evidence)">
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3">
         <path d="M4 16c2-6 5-10 8-10s6 4 8 10"/><path d="M3 20h18"/>
@@ -115,8 +123,11 @@
   <div class="info-panel glass">
     <h3 id="region-name"></h3>
     <div id="details"></div>
-    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).
-      <a href="https://github.com/Bidart64/lgm-glaciers#sources" target="_blank" rel="noopener">All sources</a></p>
+    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).</p>
+    <a class="sources" href="sources.html">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+      </svg>Sources</a>
   </div>
 
   <div class="compass glass" id="compass" title="Facing direction; click to face north">
@@ -558,6 +569,7 @@
       map.easeTo({ pitch: pitches.find(p => p > map.getPitch() + 1) ?? 0, duration: 500 })
     }
     $('names').onclick = e => visible(['towns', 'peaks'], e.currentTarget.classList.toggle('on'))
+    $('info').onclick = e => document.querySelector('.info-panel').classList.toggle('hidden', !e.currentTarget.classList.toggle('on'))
     // Field-evidence outlines, fetched only when first switched on; drawn like ../maps' trails (glow + line).
     $('mapped').onclick = e => {
       if (!map.getSource('mapped')) {

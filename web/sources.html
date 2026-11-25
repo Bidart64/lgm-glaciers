@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LGM Glaciers - Sources</title>
+  <meta name="description" content="Data, studies and methods used to recreate the glaciers of the Last Glacial Maximum.">
+  <style>
+    /* Same look as bidart64.github.io and the map: dark glass cards, green-cyan accent. */
+    :root {
+      --bg: #07080f;
+      --overlay-bg: rgba(15, 15, 26, 0.85);
+      --overlay-border: rgba(255, 255, 255, 0.1);
+      --text: #ffffff;
+      --text-muted: #a0a0b0;
+      --accent: #00d4aa;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+      background-image: radial-gradient(ellipse 80% 50% at 20% -10%, rgba(0, 212, 170, 0.12), transparent),
+                        radial-gradient(ellipse 60% 40% at 90% 10%, rgba(0, 150, 255, 0.10), transparent);
+      background-attachment: fixed;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glass {
+      background: var(--overlay-bg);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--overlay-border); border-radius: 16px;
+    }
+    main { max-width: 880px; margin: 0 auto; padding: 4rem 1rem 3rem; }
+    nav { position: sticky; top: 0; z-index: 10; display: flex; justify-content: center; gap: 1.25rem; padding: 0.75rem 1rem;
+          background: rgba(7, 8, 15, 0.75); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--overlay-border); font-size: 0.9rem; flex-wrap: wrap; }
+    nav a { color: var(--text-muted); }
+    nav a:hover, nav a.back { color: var(--accent); text-decoration: none; }
+    header { padding: 2rem 0 1rem; }
+    h1 {
+      font-size: clamp(2.2rem, 6vw, 3.4rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+      background: linear-gradient(135deg, #00ffaa, #00d4ff);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .role { margin-top: 0.5rem; font-size: 1.1rem; color: var(--text-muted); }
+    section { margin-top: 2.75rem; scroll-margin-top: 4rem; }
+    h2 { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.4rem; }
+    .used { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1rem; }
+    .card { padding: 1.2rem 1.5rem; }
+    .card + .card { margin-top: 1rem; }
+    .card h3 { font-size: 1.05rem; }
+    .card p { color: #d6d6e0; font-size: 0.95rem; margin-top: 0.3rem; }
+    .card .ref { color: var(--text-muted); font-size: 0.9rem; }
+    footer { margin-top: 3rem; text-align: center; color: var(--text-muted); font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="back" href="./">← Map</a>
+    <a href="#evidence">Field evidence</a><a href="#climate">Ice-age climate</a><a href="#today">Today's climate</a>
+    <a href="#terrain">Terrain</a><a href="#rainier">Rainier</a><a href="#checks">Field studies</a>
+    <a href="#methods">Methods</a><a href="#viewer">Map</a>
+  </nav>
+
+  <main>
+    <header>
+      <h1>Sources</h1>
+      <p class="role">Everything used to recreate the glaciers of the Last Glacial Maximum, and what each is used for</p>
+    </header>
+
+    <section id="evidence">
+      <h2>Field evidence of ice extent</h2>
+      <p class="used">Where the ice reached. The climate is fitted to it, every result is scored against it, and the map can draw it as "mapped extent".</p>
+      <div class="card glass">
+        <h3>GLACIMONTIS: mountain paleoglaciers worldwide</h3>
+        <p class="ref">Lima et al. 2026, <em>Scientific Data</em>. Data: <a href="https://doi.org/10.5281/zenodo.15600659">doi.org/10.5281/zenodo.15600659</a></p>
+        <p>The outlines of mountain glaciers. Around Mount Rainier it draws only the valley tongues, so the comparison there is limited to ground below 1,100 m.</p>
+      </div>
+      <div class="card glass">
+        <h3>Northern Hemisphere ice sheets at the LGM</h3>
+        <p class="ref">Batchelor et al. 2019, "The configuration of Northern Hemisphere ice sheets through the Quaternary", <em>Nature Communications</em> 10, 3713. Data: <a href="https://osf.io/7jen3/">osf.io/7jen3</a></p>
+        <p>The best-estimate outline of the ice sheets, including the lobes that entered northern Idaho. Not used around Rainier, where it covers the Cascades whole.</p>
+      </div>
+    </section>
+
+    <section id="climate">
+      <h2>Ice-age climate</h2>
+      <p class="used">How much colder and drier it was: the change from pre-industrial to the LGM, added to today's climate.</p>
+      <div class="card glass">
+        <h3>PMIP4 / CMIP6 climate-model simulations</h3>
+        <p class="ref">The <code>lgm</code> and <code>piControl</code> runs of AWI-ESM-1-1-LR, INM-CM4-8, MIROC-ES2L and MPI-ESM1-2-LR, from the Earth System Grid Federation (DKRZ node). Overview: Kageyama et al. 2021, "The PMIP4 Last Glacial Maximum experiments", <em>Climate of the Past</em> 17, 1065-1089.</p>
+        <p>The mean of the four models. They resolve the ice sheets but not single ranges, which is why a correction is fitted to the field evidence.</p>
+      </div>
+      <div class="card glass">
+        <h3>CHELSA-TraCE21k (tested, not used)</h3>
+        <p class="ref">Karger et al. 2023, <em>Climate of the Past</em>.</p>
+        <p>A 1 km downscaled alternative. Its cooling over central Idaho was no closer to what the glaciers imply.</p>
+      </div>
+    </section>
+
+    <section id="today">
+      <h2>Present-day climate</h2>
+      <p class="used">Monthly temperature and precipitation today, the baseline the ice-age change is added to.</p>
+      <div class="card glass">
+        <h3>PRISM 1991-2020 normals, 800 m</h3>
+        <p class="ref">PRISM Climate Group, Oregon State University, <a href="https://prism.oregonstate.edu">prism.oregonstate.edu</a></p>
+        <p>Used for every mountain region: it resolves how much more snow falls on the ranges than in the valleys.</p>
+      </div>
+      <div class="card glass">
+        <h3>WorldClim 2.1</h3>
+        <p class="ref">Fick &amp; Hijmans 2017, <em>International Journal of Climatology</em> 37, 4302-4315.</p>
+        <p>Used for the coarse North America run that supplies the ice sheets.</p>
+      </div>
+    </section>
+
+    <section id="terrain">
+      <h2>Terrain</h2>
+      <p class="used">The ground the ice grows on.</p>
+      <div class="card glass">
+        <h3>Terrain Tiles</h3>
+        <p class="ref">Mapzen, hosted as AWS Open Data: <a href="https://registry.opendata.aws/terrain-tiles/">registry.opendata.aws/terrain-tiles</a></p>
+        <p>Today's terrain (10-30 m sources in the US), for the model's mountain regions and for the 3D view.</p>
+      </div>
+      <div class="card glass">
+        <h3>ETOPO 2022 bedrock</h3>
+        <p class="ref">NOAA National Centers for Environmental Information, <a href="https://doi.org/10.25921/fd45-gt74">doi.org/10.25921/fd45-gt74</a></p>
+        <p>Bedrock with today's ice sheets removed, for the North America run.</p>
+      </div>
+    </section>
+
+    <section id="rainier">
+      <h2>Mount Rainier's lost summit</h2>
+      <p class="used">Why Rainier stands taller here than it does today.</p>
+      <div class="card glass">
+        <h3>The Osceola collapse</h3>
+        <p class="ref">Vallance &amp; Scott 1997, "The Osceola Mudflow from Mount Rainier", <em>GSA Bulletin</em> 109, 143-163.</p>
+        <p>About 5,600 years ago the summit and north-east flank collapsed. The height before that, about 4,900 m (16,000 ft), is the commonly quoted USGS estimate. The cone put back here is a plain cone of about that height and volume, not a geological reconstruction.</p>
+      </div>
+    </section>
+
+    <section id="checks">
+      <h2>Checks against field studies</h2>
+      <p class="used">Not inputs: studies the results were compared with afterwards.</p>
+      <div class="card glass">
+        <h3>The Wind River ice cap</h3>
+        <p class="ref">Birkel et al. 2012, "Climate inferences from a glaciological reconstruction of the late Pleistocene Wind River Ice Cap", <em>Arctic, Antarctic, and Alpine Research</em> 44, 265-276.</p>
+        <p>Describes a plateau ice cap with lobes reaching the basin floors, the shape the model also produces.</p>
+      </div>
+      <div class="card glass">
+        <h3>Glaciation of the Sawtooth Valley</h3>
+        <p class="ref">Thackray et al. 2004, <em>Geology</em> 32, 225-228; USGS Open-File Report 2004-1222.</p>
+        <p>Glacier lobes from the Sawtooths reached into Stanley Basin and built the moraines along the range front.</p>
+      </div>
+    </section>
+
+    <section id="methods">
+      <h2>Methods</h2>
+      <p class="used">The physics in the model.</p>
+      <div class="card glass">
+        <h3>Ice flow: the shallow-ice approximation</h3>
+        <p class="ref">Hutter 1983, <em>Theoretical Glaciology</em>.</p>
+      </div>
+      <div class="card glass">
+        <h3>Melt: positive degree-days</h3>
+        <p class="ref">Calov &amp; Greve 2005, <em>Journal of Glaciology</em> 51, 173-175.</p>
+        <p>Melt in proportion to the warmth above freezing, allowing for day-to-day temperature swings.</p>
+      </div>
+    </section>
+
+    <section id="viewer">
+      <h2>The map</h2>
+      <p class="used">What the 3D view is drawn with.</p>
+      <div class="card glass">
+        <h3>Imagery, names and software</h3>
+        <p>Imagery from the USGS National Map. Place names from OpenFreeMap, OpenMapTiles and OpenStreetMap contributors. Drawn with MapLibre GL JS.</p>
+      </div>
+    </section>
+
+    <footer><a href="./">Back to the map</a> · <a href="https://github.com/Bidart64/lgm-glaciers">Code and method on GitHub</a></footer>
+  </main>
+</body>
+</html>

@@ -21,7 +21,8 @@ def main():
     data = DOCS / "data"
     shutil.rmtree(data, ignore_errors=True)  # drop files from earlier builds
     data.mkdir(parents=True)
-    shutil.copy(WEB / "index.html", DOCS / "index.html")
+    for page in ("index.html", "sources.html"):
+        shutil.copy(WEB / page, DOCS)
     # No Mapbox token: the viewer falls back to USGS imagery, AWS Terrain Tiles and OpenFreeMap names.
     (DOCS / "config.js").write_text(f"window.MAPBOX_TOKEN = ''\nwindow.LGM_START = '{names[0]}'\n"
                                     f"window.LGM_REGIONS = {json.dumps(names)}\nwindow.LGM_BACKGROUND = {json.dumps(background)}\n")

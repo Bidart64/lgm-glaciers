@@ -19,11 +19,12 @@ REGIONS = {
     "sawtooth":      (-114.95, 44.10, 40, 50, 0.2, 3000),
     "rainier":       (-121.80, 46.80, 60, 50, 0.2, 3000),
     "pyrenees":      (0.60, 42.70, 220, 80, 0.3, 3000),
+    "alaska":        (-151.0, 63.0, 850, 650, 1.5, 15000),
 }
-# Nested regions take ice flowing in across their northern edge from a coarser run (Cordilleran lobes
-# entering Idaho from British Columbia). Other edges stay ice-free: the coarse run over-glaciates the
-# lowlands there.
-PARENT = {"idaho": "north_america"}
+# Nested regions take ice flowing in across their edges from a coarser run: (run, which edges). Idaho takes
+# the Cordilleran lobes entering from British Columbia across its northern edge only, because the coarse run
+# over-glaciates the lowlands along the others. Alaska is joined to the ice sheet along its eastern side.
+PARENT = {"idaho": ("north_america", "north"), "alaska": ("north_america", "all")}
 # Mountains as they stood at the LGM: (summit lon, lat, height m, slope of the cone put back on top). Rainier lost
 # its top to the Osceola collapse 5,600 years ago; before that it is thought to have reached about 4,900 m.
 REBUILT = {"rainier": (-121.7603, 46.8523, 4900.0, 0.7)}
@@ -54,37 +55,60 @@ def correction(region, lon, lat):
 
 
 def setup(region, use_correction=True, mapped=False):
-    """Everything a run needs: grid, bedrock, LGM climate (T, P, their elevation) and edge ice.
-    In mapped mode the ice is tied to the field evidence instead of predicted: it is colder inside the
-    mapped extent and nothing survives outside it, so ice fills the outlines and only its thickness and flow
-    are computed. `natural` is the climate without that, for colouring the ice (snow or bare)."""
+    """Everything a run needs, as a dict:
+
+    proj, x, y, dx, lon, lat   the grid (projection, cell centres in metres, spacing, and their lon/lat)
+    bed0, rebuilt              the ground, and how much of it was put back on top of today's (see REBUILT)
+    climate, natural           ice-age (monthly temperature, monthly precipitation, their elevation); `natural`
+                               is the same without mapped mode's changes, for colouring the ice (snow or bare)
+    mapped, known              the field evidence on the grid, and where it can be compared with
+    H_edge, years, corrected   ice thickness held at the edges, simulated years, whether a fit was applied
+
+    In mapped mode the ice is tied to the field evidence instead of predicted: it is colder inside the mapped
+    extent and nothing survives outside it, so ice fills the outlines and only its thickness and flow are
+    computed.
+    """
+    # The grid: square cells on an equal-area projection centred on the region (x east, y north, metres).
     lon0, lat0, hw, hh, km, years = REGIONS[region]
     dx = km * 1000.0
     proj = dem.LAEA(lon0, lat0)
     x = np.arange(-hw * 1000, hw * 1000 + 1, dx)
     y = np.arange(-hh * 1000, hh * 1000 + 1, dx)
-    lon, lat = proj.inverse(*np.meshgrid(x, y))
+    X, Y = np.meshgrid(x, y)
+    lon, lat = proj.inverse(X, Y)
+
+    # The ground, and today's climate on it (fine grids get the finer climate data).
     bed0 = dem.load_bed(proj, x, y, dx)
-    T, P, z_ref = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)  # PRISM for fine grids
+    T, P, z_ref = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)
     known = bed0 < UNMAPPED_ABOVE.get(region, np.inf)  # where the outlines can be compared with
     rebuilt = np.zeros_like(bed0)  # height put back on top of today's ground (m)
-    if region in REBUILT:
+    if region in REBUILT:  # a cone over the summit, wherever it stands above today's ground
         lon_s, lat_s, top, slope = REBUILT[region]
-        rebuilt = np.maximum(top - slope * np.hypot(*np.subtract(np.meshgrid(x, y), np.reshape(proj.forward(lon_s, lat_s), (2, 1, 1)))) - bed0, 0)
+        x_s, y_s = proj.forward(lon_s, lat_s)
+        rebuilt = np.maximum(top - slope * np.hypot(X - x_s, Y - y_s) - bed0, 0)
         bed0 = bed0 + rebuilt
+
+    # The ice-age climate: today's, plus the climate models' change, plus this region's fitted correction.
     lgm_dT, ratio = pmip.sample(lon, lat)
     fitted = correction(region, lon, lat) if use_correction else 0.0
-    natural = climate = T + lgm_dT + fitted, P * ratio, z_ref  # present climate + LGM anomalies
-    evidence = outlines.rasterize(proj, x, y, region not in NO_SHEETS)  # mapped LGM ice on this grid
+    natural = climate = T + lgm_dT + fitted, P * ratio, z_ref
+
+    # The field evidence on this grid and, in mapped mode, the climate bent to it: colder inside the mapped ice
+    # (building up over MARGIN from its outline), far too warm for ice outside.
+    evidence = outlines.rasterize(proj, x, y, region not in NO_SHEETS)
     if mapped:
         inside = np.minimum(distance_transform_edt(evidence) * dx / MARGIN, 1)
         climate = climate[0] + np.where(inside > 0, MAPPED[0] * inside, MAPPED[1]), *climate[1:]
 
+    # Ice entering from a coarser run: its thickness along this region's edges (only the outermost cells are
+    # used), or along the northern edge alone, which is the last row.
     H_edge = None
     if region in PARENT:
-        s, ice = export.read(WEB, PARENT[region], lon, lat)
+        parent, edges = PARENT[region]
+        s, ice = export.read(WEB, parent, lon, lat)
         H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
-        H_edge[:-1] = 0  # only the last row, the northern edge
-    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, rebuilt=rebuilt, climate=climate, natural=natural, mapped=evidence, known=known,
-                H_edge=H_edge,
-                years=years, corrected=bool(np.any(fitted)))
+        if edges == "north":
+            H_edge[:-1] = 0
+    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, rebuilt=rebuilt, climate=climate,
+                natural=natural, mapped=evidence, known=known, H_edge=H_edge, years=years,
+                corrected=bool(np.any(fitted)))

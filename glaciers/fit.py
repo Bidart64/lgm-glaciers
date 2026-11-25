@@ -21,8 +21,9 @@ HELD_OUT = {"idaho": {"Lemhi": (-113.60, -112.80, 44.00, 44.90), "Pioneer": (-11
             "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)},
             "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)},
             "rainier": {"Goat Rocks": (-121.60, -121.30, 46.40, 46.60)},
-            "pyrenees": {"Eastern Pyrenees": (1.70, 2.60, 42.30, 42.80)}}
-SPACING = {"idaho": 1.0}  # degrees between control points; single ranges use 0.5, which also fits held-out ranges better
+            "pyrenees": {"Eastern Pyrenees": (1.70, 2.60, 42.30, 42.80)},
+            "alaska": {"Central Brooks Range": (-154.0, -148.0, 67.4, 68.8)}}
+SPACING = {"idaho": 1.0, "alaska": 1.0}  # degrees between control points; single ranges use 0.5, which also fits held-out ranges better
 RADIUS = 50e3      # per degree of spacing: control points compare model and mapped ice within about this distance (m)
 GAIN = 1.0         # K of correction per e-fold of area mismatch
 MAX_STEP = 1.0     # K per iteration
@@ -39,12 +40,12 @@ def main():
     p.add_argument("--iterations", type=int, default=8, help="at most this many per coarser grid")
     a = p.parse_args()
 
-    r = setup(a.region, use_correction=False)
+    r = setup(a.region, use_correction=False)  # the climate as the models give it; the fit adds dT to it
     proj, spacing = r["proj"], SPACING.get(a.region, 0.5)
     radius, min_ice = RADIUS * spacing, MIN_ICE * spacing**2
     lons = np.arange(np.floor(r["lon"].min()), np.ceil(r["lon"].max()) + spacing, spacing)
     lats = np.arange(np.floor(r["lat"].min()), np.ceil(r["lat"].max()) + spacing, spacing)
-    dT = np.zeros((len(lats), len(lons)))
+    dT = np.zeros((len(lats), len(lons)))  # the correction: one value per control point (K)
     for bed0, (T, P, z_ref), dx, edge in model.levels(r["bed0"], r["climate"], r["dx"], r["H_edge"]):
         lon, lat, X, Y = (model.resample(v, bed0.shape) for v in (r["lon"], r["lat"], *np.meshgrid(r["x"], r["y"])))
         mapped = model.resample(r["mapped"] * 1.0, bed0.shape) > 0.5
@@ -74,9 +75,10 @@ def main():
             # Update each control point from the weighted model and mapped ice areas around it.
             cell, step = dx * dx / 1e6, np.zeros_like(dT)
             for n, (k, w) in enumerate(weights):
-                am, ao = (w * ice.ravel()[k]).sum() * cell, (w * mapped.ravel()[k]).sum() * cell
-                if am + ao > min_ice:
+                am, ao = (w * ice.ravel()[k]).sum() * cell, (w * mapped.ravel()[k]).sum() * cell  # model, mapped (km²)
+                if am + ao > min_ice:  # too much model ice here: warm; too little: cool
                     step.flat[n] = np.clip(GAIN * np.log((am + min_ice / 2) / (ao + min_ice / 2)), -MAX_STEP, MAX_STEP)
+            # Take the step, then pull each point part of the way towards its neighbours and keep it in bounds.
             old, dT = dT, np.clip((1 - SMOOTH) * (dT + step) + SMOOTH * gaussian_filter(dT + step, 1.0, mode="nearest"), *LIMITS)
             score = overlap(ice, ~skip)
             np.savez(correction_path(a.region), lons=lons, lats=lats, dT=dT)

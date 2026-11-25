@@ -151,6 +151,20 @@
 
   <div class="loading-overlay" id="loading"><div class="spinner"></div><p>Loading glaciers...</p></div>
 
+  <!--
+    How this page works.
+
+    The model (python -m glaciers <region>) leaves one PNG per region in data/: the ice surface, its thickness and
+    a few fields used for painting, on the model's own grid. This page turns those into map tiles as you look:
+
+    1. The script below ("tiler") runs in a few web workers. For each tile the map asks for, a worker fetches
+       today's terrain for that tile, raises it to the model's ice surface where ice buries it, and paints the
+       ice. It returns two images: the glacial ground (for the 3D terrain) and the overlay (ice, snow, shading).
+    2. The second script is the page itself: it sets up the map (MapLibre), hands tile requests to the workers
+       through a custom "lgm://" address, and runs the controls, the details panel and the click readout.
+
+    With a Mapbox token in config.js, imagery, terrain and names come from Mapbox; without one, from free sources.
+  -->
   <script id="tiler" type="text/plain">
     // Runs in web workers, so the map stays smooth: builds each tile of the glacial world from today's
     // terrain and the model's ice. Returns { dem: the glacial ground (Terrarium), ice: the overlay } as
@@ -248,10 +262,10 @@
     // (0-1), mass balance (m/yr), flow-line value (0-1), and the stretching direction as the cosine and sine of
     // twice its angle (which, unlike the angle, can be interpolated), height of rebuilt ground above today's (m).
     const F = 8
-    function sample(lon, lat, g, o) {
+    function sample(here, lon, lat, g, o) {  // `here`: the regions that can cover the point, coarsest first
       g.set([-1e4, 0, 0, -9, 0, 1, 0, 0], o)
       let found = false
-      for (const r of regions) {
+      for (const r of here) {
         const [x, y] = laea(r, lon, lat)
         const fx = (x - r.x0) / r.dx, fy = (r.y1 - y) / r.dx
         if (!r.s || fx < 0 || fy < 0 || fx >= r.nx - 1 || fy >= r.ny - 1) continue
@@ -281,18 +295,21 @@
     const SCHRUND = 40    // m: ice thickness at a bergschrund
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
     async function tile(z, x, y) {
+      // Today's terrain for this tile, as encoded elevation pixels.
       const px = await pixels(await download(cfg.dem[(x + y) % cfg.dem.length].replace('{z}', z).replace('{x}', x).replace('{y}', y)))
       const n = 2 ** z
       const mpp = 40075016 * Math.cos(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))) / (n * SIZE)  // metres per pixel
-      // The model is smooth: sample it every STEP pixels (but at least once per model cell) and interpolate.
-      const lat = t => Math.atan(Math.sinh(Math.PI * (1 - 2 * t / n))) * 180 / Math.PI, west = x / n * 360 - 180, east = (x + 1) / n * 360 - 180
-      const here = regions.filter(r => r.bounds[0] < east && r.bounds[2] > west && r.bounds[1] < lat(y) && r.bounds[3] > lat(y + 1))
+      // The tile's edges, and the regions under it: only those are unpacked (once) and sampled.
+      const latitude = t => Math.atan(Math.sinh(Math.PI * (1 - 2 * t / n))) * 180 / Math.PI  // of tile row t
+      const west = x / n * 360 - 180, east = (x + 1) / n * 360 - 180, north = latitude(y), south = latitude(y + 1)
+      const here = regions.filter(r => r.bounds[0] < east && r.bounds[2] > west && r.bounds[1] < north && r.bounds[3] > south)
       await Promise.all(here.map(r => r.unpacked ??= unpack(r).catch(() => {})))
+      // The model is smooth, so it is sampled on a lattice every STEP pixels (but at least once per model cell)
+      // and interpolated in between: L x L points, F values each, in g.
       const STEP = 2 ** Math.min(3, Math.max(0, Math.floor(Math.log2(Math.min(1e5, ...here.map(r => r.dx)) / mpp))))
       const L = SIZE / STEP + 1, g = new Float32Array(L * L * F)
       for (let j = 0; j < L; j++) {
-        const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + j / (L - 1)) / n))) * 180 / Math.PI
-        for (let k = 0; k < L; k++) sample((x + k / (L - 1)) / n * 360 - 180, lat, g, (j * L + k) * F)
+        for (let k = 0; k < L; k++) sample(here, (x + k / (L - 1)) / n * 360 - 180, latitude(y + j / (L - 1)), g, (j * L + k) * F)
       }
       // Slopes (rise per pixel) of a tile-sized array, towards the east and north.
       const ddx = (a, i, col) => col === 0 ? a[i + 1] - a[i] : col === SIZE - 1 ? a[i] - a[i - 1] : (a[i + 1] - a[i - 1]) / 2

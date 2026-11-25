@@ -21,7 +21,7 @@ def main():
     t0 = time.time()
     print(f"{a.region}: {len(y)}x{len(x)} grid, {dx / 1000:g} km{', fitted correction' if r['corrected'] else ''}")
     H, bed = model.grow(bed0, r["climate"], dx, a.years or r["years"], r["H_edge"])
-    s = np.maximum(bed + H, model.SEA_LEVEL)
+    s = np.maximum(bed + H, model.SEA_LEVEL)  # the ice surface on the sunken bed, as the model sees it
     vx, vy = model.surface_velocity(H, s, dx, model.sliding(bed0, dx))
     ice, mapped = H > model.GLACIER, r["mapped"]
     km2 = lambda mask: round(mask.sum() * dx * dx / 1e6)

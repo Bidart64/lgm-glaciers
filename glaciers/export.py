@@ -19,9 +19,11 @@ def flow_lines(vx, vy):
     are flow lines: every cell takes smooth noise from where its ice came from, 256 cells upstream or the
     ice divide. Where tributaries join, their bands run side by side, like medial moraines."""
     speed = np.hypot(vx, vy)
-    step = np.where(speed > 1e-3, 1 / np.maximum(speed, 1e-3), 0)
-    pos = np.indices(vx.shape) - np.stack([vy, vx]) * step  # one cell upstream (rows run north)
-    for _ in range(8):  # follow the path twice as far each pass
+    step = np.where(speed > 1e-3, 1 / np.maximum(speed, 1e-3), 0)  # stagnant ice stays where it is
+    pos = np.indices(vx.shape) - np.stack([vy, vx]) * step  # (row, column) one cell upstream (rows run north)
+    # pos[cell] = where that cell's ice was one step ago. Looking the same table up at that place gives two
+    # steps ago, and repeating doubles the reach each time: 8 passes follow the path 256 cells back.
+    for _ in range(8):
         pos = np.stack([map_coordinates(p, pos, order=1, mode="nearest") for p in pos])
     noise = gaussian_filter(np.random.default_rng(0).random(vx.shape), 4)
     noise = (noise - noise.min()) / np.ptp(noise)
@@ -42,16 +44,20 @@ def write(web: Path, name, proj, x, y, dx, bed0, rebuilt, H, vx, vy, M, stats):
     directly with present-day elevation tiles. Thick ice is drawn up to that surface, flat across a valley;
     thin ice is draped over the fine terrain at the model's thickness.
     """
+    # Band 1: the ice surface.
     ice = H > GLACIER
-    dist, near = distance_transform_edt(~ice, return_indices=True)
+    # Ice cannot hold bumps much smaller than its own thickness, but the model's surface is rough from cell to
+    # cell (it follows a bed sampled from fine terrain), which shows as blocks when lit. Smooth it, averaging
+    # over ice cells only so that the rock beside a glacier doesn't pull its surface up.
+    top = gaussian_filter(ice * (bed0 + H), SMOOTH) / np.maximum(gaussian_filter(ice * 1.0, SMOOTH), 1e-6)
     # Just outside the ice (valley walls), carry the nearest ice surface rather than the rock, so the
     # browser's interpolated surface stays flat until it meets the walls instead of ramping up them.
-    # Ice cannot hold bumps much smaller than its own thickness, but the model's surface is rough from cell to
-    # cell (it follows a bed sampled from fine terrain), which shows as blocks when lit. Smooth it within the ice.
-    top = gaussian_filter(ice * (bed0 + H), SMOOTH) / np.maximum(gaussian_filter(ice * 1.0, SMOOTH), 1e-6)
+    dist, near = distance_transform_edt(~ice, return_indices=True)  # cells to the nearest ice, and which cell
     surface = np.where(dist > 2, bed0, top[tuple(near)])
     surface = np.clip(np.round((surface + 1000) * 8), 0, 65535).astype(np.uint32)
 
+    # Band 2: how fast, and in which direction, the surface is being pulled apart (the strain-rate tensor of
+    # the surface velocity; its larger eigenvalue and that eigenvalue's direction).
     dvx_dy, dvx_dx = np.gradient(vx, dx)
     dvy_dy, dvy_dx = np.gradient(vy, dx)
     shear, half = 0.5 * (dvx_dy + dvy_dx), 0.5 * (dvx_dx - dvy_dy)

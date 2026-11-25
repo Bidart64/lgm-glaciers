@@ -178,21 +178,23 @@
       return res.blob()
     }
 
-    // Model grids (glaciers/export.py), coarsest first, each { meta, blob: its PNG }; one that fails to
-    // decode is skipped.
+    // Model grids (glaciers/export.py), coarsest first, each { meta, blob: its PNG }. To save memory a region is
+    // only unpacked when a tile first needs it (one that fails is skipped), into one byte per value except the
+    // surface, which keeps its 16 bits.
     async function load(list) {
-      regions = (await Promise.allSettled(list.map(async ({ meta, blob }) => {
-        const px = await pixels(blob), n = meta.nx * meta.ny
-        const s = new Float32Array(n), bands = [0, 1, 2, 3, 4, 5].map(() => new Uint8Array(n))
-        for (let i = 0; i < n; i++) {
-          s[i] = (px[4 * i] * 256 + px[4 * i + 1]) / 8 - 1000
-          bands[0][i] = px[4 * i + 2]                                                               // thickness
-          bands[1][i] = px[4 * (n + i)]; bands[2][i] = px[4 * (n + i) + 1]; bands[3][i] = px[4 * (n + i) + 2]
-          bands[4][i] = px[4 * (2 * n + i)]; bands[5][i] = px[4 * (2 * n + i) + 1]                  // flow lines, rebuilt ground
-        }
-        const [h, crev, ang, mb, phi, up] = bands
-        return { ...meta, s, h, crev, ang, mb, phi, up, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
-      }))).filter(r => r.status === 'fulfilled').map(r => r.value)
+      regions = list.map(({ meta, blob }) => ({ ...meta, blob, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }))
+    }
+    async function unpack(r) {
+      const px = await pixels(r.blob), n = r.nx * r.ny
+      const s = new Uint16Array(n), bands = [0, 1, 2, 3, 4, 5].map(() => new Uint8Array(n))
+      for (let i = 0; i < n; i++) {
+        s[i] = px[4 * i] * 256 + px[4 * i + 1]
+        bands[0][i] = px[4 * i + 2]                                                               // thickness
+        bands[1][i] = px[4 * (n + i)]; bands[2][i] = px[4 * (n + i) + 1]; bands[3][i] = px[4 * (n + i) + 2]
+        bands[4][i] = px[4 * (2 * n + i)]; bands[5][i] = px[4 * (2 * n + i) + 1]                  // flow lines, rebuilt ground
+      }
+      const [h, crev, ang, mb, phi, up] = bands
+      Object.assign(r, { s, h, crev, ang, mb, phi, up, blob: null })
     }
 
     // Spherical Lambert azimuthal equal-area, matching glaciers/dem.py.
@@ -227,10 +229,10 @@
       for (const r of regions) {
         const [x, y] = laea(r, lon, lat)
         const fx = (x - r.x0) / r.dx, fy = (r.y1 - y) / r.dx
-        if (fx < 0 || fy < 0 || fx >= r.nx - 1 || fy >= r.ny - 1) continue
+        if (!r.s || fx < 0 || fy < 0 || fx >= r.nx - 1 || fy >= r.ny - 1) continue
         const i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j, k = j * r.nx + i
         const mix = a => (1 - v) * ((1 - u) * a[k] + u * a[k + 1]) + v * ((1 - u) * a[k + r.nx] + u * a[k + r.nx + 1])
-        const m = [cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s), mix(r.h), mix(r.crev) / 255, (mix(r.mb) - 128) / 25, mix(r.phi) / 255]
+        const m = [(cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s)) / 8 - 1000, mix(r.h), mix(r.crev) / 255, (mix(r.mb) - 128) / 25, mix(r.phi) / 255]
         // Finer regions win, blended in over 10 cells from their edge so there is no seam.
         const t = found ? Math.min(1, Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10) : 1
         const a2 = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * 2 * Math.PI
@@ -258,7 +260,10 @@
       const n = 2 ** z
       const mpp = 40075016 * Math.cos(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))) / (n * SIZE)  // metres per pixel
       // The model is smooth: sample it every STEP pixels (but at least once per model cell) and interpolate.
-      const STEP = 2 ** Math.min(3, Math.max(0, Math.floor(Math.log2(Math.min(...regions.map(r => r.dx)) / mpp))))
+      const lat = t => Math.atan(Math.sinh(Math.PI * (1 - 2 * t / n))) * 180 / Math.PI, west = x / n * 360 - 180, east = (x + 1) / n * 360 - 180
+      const here = regions.filter(r => r.bounds[0] < east && r.bounds[2] > west && r.bounds[1] < lat(y) && r.bounds[3] > lat(y + 1))
+      await Promise.all(here.map(r => r.unpacked ??= unpack(r).catch(() => {})))
+      const STEP = 2 ** Math.min(3, Math.max(0, Math.floor(Math.log2(Math.min(1e5, ...here.map(r => r.dx)) / mpp))))
       const L = SIZE / STEP + 1, g = new Float32Array(L * L * F)
       for (let j = 0; j < L; j++) {
         const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + j / (L - 1)) / n))) * 180 / Math.PI
@@ -377,7 +382,7 @@
 
   <script>
     // Map data comes from Mapbox when config.js sets a token, otherwise from free services (USGS imagery,
-    // AWS Terrain Tiles, OpenFreeMap names), so the page also works with no account, e.g. on GitHub Pages.
+    // AWS Terrain Tiles, bundled GeoNames names), so the page also works with no account, e.g. on GitHub Pages.
     const TOKEN = window.MAPBOX_TOKEN
     const DATA = new URL(window.LGM_DATA || 'data', location.href).href
     const P = TOKEN ? {
@@ -399,11 +404,12 @@
                  tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
       world: { tileSize: 256, maxzoom: 14, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg'],  // everywhere else
                attribution: 'Sentinel-2 cloudless by EOX (contains modified Copernicus Sentinel data 2016)' },
-      credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS',
-      glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
-      names: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
-      towns: { layer: 'place', type: ['get', 'class'], extra: true, name: 'name:en' },
-      peaks: { layer: 'mountain_peak', filter: ['in', ['get', 'class'], ['literal', ['peak', 'volcano']]], ele: 'ele', name: 'name:en' },
+      credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS · Names: GeoNames',
+      // Names and fonts come with the site (python -m glaciers.names): a map service's may be stopped by content blockers.
+      glyphs: `${new URL('fonts', location.href).href}/{fontstack}/{range}.pbf`,
+      names: { type: 'geojson', data: `${DATA}/names.geojson` },
+      towns: { type: ['get', 'kind'], extra: ['!=', ['get', 'kind'], 'peak'], name: 'name' },
+      peaks: { filter: ['==', ['get', 'kind'], 'peak'], ele: 'ele', name: 'name' },
       fonts: { town: ['Noto Sans Regular'], peak: ['Noto Sans Italic'] },
     }
     const SIZE = P.size
@@ -428,7 +434,7 @@
     function glacialTile(key, kind) {
       if (tiles.get(key)?.taken.has(kind)) tiles.delete(key)  // asked for again: build it again
       if (!tiles.has(key)) {
-        if (tiles.size > 200) tiles.delete(tiles.keys().next().value)  // overlays whose ground was never wanted (2D)
+        if (tiles.size > 64) tiles.delete(tiles.keys().next().value)  // overlays whose ground was never wanted (2D)
         tiles.set(key, { taken: new Set(), built: new Promise((resolve, reject) => {
           const w = workers.reduce((a, b) => a.busy <= b.busy ? a : b), id = Math.random()
           jobs.set(id, d => d.error ? (tiles.delete(key), reject(new Error(d.error))) : resolve(d))
@@ -457,6 +463,7 @@
     const shade = { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' }
     const map = new maplibregl.Map({
       container: 'map', center: [-113.65, 44.05], zoom: 9, pitch: 60, bearing: 30, maxPitch: 80, hash: true,  // URL keeps the view
+      maxTileCacheSize: 24,  // off-screen tiles kept per source: fewer than the default, to save memory
       attributionControl: { compact: true },
       style: {
         version: 8,
@@ -475,7 +482,7 @@
           { id: 'satellite', type: 'raster', source: 'satellite' },
           { id: 'ice', type: 'raster', source: 'ice', paint: { 'raster-resampling': 'linear' } },
           { id: 'shade-today', type: 'hillshade', source: 'today', layout: { visibility: 'none' }, paint: shade },
-          { id: 'towns', type: 'symbol', source: 'names', 'source-layer': P.towns.layer,
+          { id: 'towns', type: 'symbol', source: 'names', ...(P.towns.layer && { 'source-layer': P.towns.layer }),
             filter: ['all', P.towns.extra,
                      ['any', ['==', P.towns.type, 'city'],
                       ['all', ['==', P.towns.type, 'town'], ['>=', ['zoom'], 7]],
@@ -484,7 +491,7 @@
                       'text-size': ['match', P.towns.type, 'city', 15, 'town', 13, 11] },
             paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(15, 20, 30, 0.85)', 'text-halo-width': 1.5 } },
           // As many peaks as fit: names alone until zoom 11 (heights below them take room), packed closely.
-          { id: 'peaks', type: 'symbol', source: 'names', 'source-layer': P.peaks.layer, minzoom: 8,
+          { id: 'peaks', type: 'symbol', source: 'names', ...(P.peaks.layer && { 'source-layer': P.peaks.layer }), minzoom: 8,
             filter: ['all', ['has', 'name'], P.peaks.filter],
             layout: { 'text-field': ['step', ['zoom'], ['concat', '▲ ', name(P.peaks.name)], 11,
                                      ['format', '▲ ', {}, name(P.peaks.name), {},

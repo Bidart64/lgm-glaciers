@@ -24,11 +24,12 @@ The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawt
 python -m glaciers.fit sawtooth                 # ~15 min
 python -m glaciers sawtooth                     # ~2 min
 python -m glaciers sawtooth --mapped            # instead: fill the mapped extent with ice (see below)
+python -m glaciers.names                        # peak and town names and fonts for the free viewer
 python -m glaciers.demo                         # standalone demo in docs/ (free map sources, GitHub Pages)
 ```
 
 Without a Mapbox token the viewer uses free sources: USGS National Map imagery (US only), AWS Terrain
-Tiles and OpenFreeMap names. The demo in `docs/` runs that way, so anyone can open it. Controls follow
+Tiles and GeoNames place names. The demo in `docs/` runs that way, so anyone can open it. Controls follow
 `../maps`: reset view, 3D terrain, glaciers on/off, viewing angle, place names, region details and mapped
 extent. Click the map for a point's coordinates, its elevation with the ice, and the ice thickness there. Tilt and
 rotate with Ctrl+drag, Option+drag (Alt on Windows) or right-drag. The URL keeps the view, so views can be
@@ -164,5 +165,5 @@ Everything used to recreate the LGM ice, and what each is used for.
 
 **Viewer**
 - MapLibre GL JS; imagery from the USGS National Map (US) and Sentinel-2 cloudless by EOX (elsewhere;
-  contains modified Copernicus Sentinel data 2016); place names from OpenFreeMap / OpenMapTiles /
-  OpenStreetMap; with a token, imagery, terrain and names from Mapbox instead.
+  contains modified Copernicus Sentinel data 2016); peak and town names from GeoNames (geonames.org, CC BY 4.0),
+  bundled with the site by `python -m glaciers.names`; with a token, imagery, terrain and names from Mapbox instead.

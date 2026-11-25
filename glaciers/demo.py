@@ -28,6 +28,8 @@ def main():
                                     f"window.LGM_REGIONS = {json.dumps(names)}\nwindow.LGM_BACKGROUND = {json.dumps(background)}\n")
     for r in names + background:
         shutil.copy(WEB / "data" / f"{r}.png", data)
+    shutil.copy(WEB / "data" / "names.geojson", data)  # peak and town names, and their fonts (python -m glaciers.names)
+    shutil.copytree(WEB / "fonts", DOCS / "fonts", dirs_exist_ok=True)
     # Coarsest first, as the viewer expects (finer regions are drawn over coarser ones).
     (data / "regions.json").write_text(json.dumps(sorted(metas, key=lambda m: -m["dx"])))
 

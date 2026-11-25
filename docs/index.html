@@ -135,10 +135,12 @@
 
   <script id="tiler" type="text/plain">
     // Runs in web workers, so the map stays smooth: builds each tile of the glacial world from today's
-    // terrain and the model's ice. Returns { dem: Terrarium PNG of the glacial ground, ice: overlay PNG }.
-    let cfg, SIZE, regions = [], ready
+    // terrain and the model's ice. Returns { dem: the glacial ground (Terrarium), ice: the overlay } as raw
+    // RGBA pixels: encoding them as PNG took far longer than computing them.
+    let cfg, SIZE, regions = [], start
+    const ready = new Promise(resolve => { start = resolve })
     onmessage = async ({ data: m }) => {
-      if (m.cfg) { cfg = m.cfg; SIZE = cfg.size; ready = load(); return }
+      if (m.cfg) { cfg = m.cfg; SIZE = cfg.size; return load(m.regions).then(start) }
       try {
         await ready
         const t = await tile(...m.key.split('/').map(Number))
@@ -146,24 +148,32 @@
       } catch (e) { postMessage({ id: m.id, error: String(e) }) }
     }
 
-    async function decode(url, tries = 3) {
-      const res = await fetch(url).catch(e => { if (tries > 1) return null; throw e })
-      if (!res || !res.ok) { if (tries > 1) return decode(url, tries - 1); throw new Error(url) }
-      const img = await createImageBitmap(await res.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
+    async function pixels(blob) {
+      const img = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
       const ctx = new OffscreenCanvas(img.width, img.height).getContext('2d', { willReadFrequently: true })
       ctx.drawImage(img, 0, 0)
       return ctx.getImageData(0, 0, img.width, img.height).data
     }
+    async function download(url, tries = 3) {
+      const res = await fetch(url).catch(e => { if (tries > 1) return null; throw e })
+      if (!res || !res.ok) { if (tries > 1) return download(url, tries - 1); throw new Error(url) }
+      return res.blob()
+    }
 
-    // Model grids (glaciers/export.py), coarsest first; a region that fails to load is skipped.
-    async function load() {
-      const list = (await (await fetch(`${cfg.data}/regions.json`)).json()).filter(r => !cfg.names || cfg.names.includes(r.name))
-      regions = (await Promise.allSettled(list.map(async meta => {
-        const px = await decode(`${cfg.data}/${meta.name}.png`), n = meta.nx * meta.ny
-        const band = (b, c) => Uint8Array.from({ length: n }, (_, i) => px[4 * (b * n + i) + c])
-        const s = Float32Array.from({ length: n }, (_, i) => (px[4 * i] * 256 + px[4 * i + 1]) / 8 - 1000)
-        return { ...meta, s, h: band(0, 2), crev: band(1, 0), ang: band(1, 1), mb: band(1, 2), phi: band(2, 0),
-                 lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
+    // Model grids (glaciers/export.py), coarsest first, each { meta, blob: its PNG }; one that fails to
+    // decode is skipped.
+    async function load(list) {
+      regions = (await Promise.allSettled(list.map(async ({ meta, blob }) => {
+        const px = await pixels(blob), n = meta.nx * meta.ny
+        const s = new Float32Array(n), bands = [[0, 2], [1, 0], [1, 1], [1, 2], [2, 0]].map(() => new Uint8Array(n))
+        for (let i = 0; i < n; i++) {
+          s[i] = (px[4 * i] * 256 + px[4 * i + 1]) / 8 - 1000
+          bands[0][i] = px[4 * i + 2]                                                               // thickness
+          bands[1][i] = px[4 * (n + i)]; bands[2][i] = px[4 * (n + i) + 1]; bands[3][i] = px[4 * (n + i) + 2]
+          bands[4][i] = px[4 * (2 * n + i)]                                                         // flow lines
+        }
+        const [h, crev, ang, mb, phi] = bands
+        return { ...meta, s, h, crev, ang, mb, phi, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
       }))).filter(r => r.status === 'fulfilled').map(r => r.value)
     }
 
@@ -218,17 +228,11 @@
     }
     const clamp = v => Math.min(1, Math.max(0, v))
 
-    async function png(rgba) {
-      const canvas = new OffscreenCanvas(SIZE, SIZE)
-      canvas.getContext('2d').putImageData(new ImageData(rgba, SIZE, SIZE), 0, 0)
-      return (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer()
-    }
-
     const MIN_ICE = 8     // m: thinner ice is not drawn
     const VENEER = 30     // m: ice up to this thin follows the fine terrain instead of a flat surface
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
     async function tile(z, x, y) {
-      const px = await decode(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y))
+      const px = await pixels(await download(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y)))
       const n = 2 ** z
       const mpp = 40075016 * Math.cos(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))) / (n * SIZE)  // metres per pixel
       // The model is smooth: sample it every STEP pixels (but at least once per model cell) and interpolate.
@@ -313,7 +317,7 @@
           ice.set([c[0] * light, c[1] * (0.25 + 0.75 * light), c[2] * (0.45 + 0.55 * light), 255], 4 * i)
         }
       }
-      return { dem: await png(dem), ice: await png(ice) }
+      return { dem: dem.buffer, ice: ice.buffer }
     }
   </script>
 
@@ -351,19 +355,19 @@
     const listed = r => !window.LGM_REGIONS || window.LGM_REGIONS.includes(r.name)
     const names = window.LGM_REGIONS && [...window.LGM_REGIONS, ...(window.LGM_BACKGROUND || [])]
 
-    // Tiles are built by a few workers (the "tiler" script above); each tile is built once and kept.
+    // Tiles are built by a few workers (the "tiler" script above), which are handed the region data once it
+    // has been downloaded (once, here). Recent tiles are kept: the ground of each is asked for twice.
     const source = URL.createObjectURL(new Blob([$('tiler').textContent], { type: 'text/javascript' }))
     const jobs = new Map(), tiles = new Map()
     const workers = Array.from({ length: Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2)) }, () => {
       const w = new Worker(source)
       w.busy = 0
-      w.postMessage({ cfg: { data: DATA, names, dem: P.today.tiles[0], mapbox: !!TOKEN, size: SIZE } })
       w.onmessage = ({ data }) => { w.busy--; jobs.get(data.id)(data); jobs.delete(data.id) }
       return w
     })
     function glacialTile(key) {
       if (!tiles.has(key)) {
-        if (tiles.size > 300) tiles.delete(tiles.keys().next().value)
+        if (tiles.size > 60) tiles.delete(tiles.keys().next().value)
         tiles.set(key, new Promise((resolve, reject) => {
           const w = workers.reduce((a, b) => a.busy <= b.busy ? a : b), id = Math.random()
           jobs.set(id, d => d.error ? (tiles.delete(key), reject(new Error(d.error))) : resolve(d))
@@ -376,7 +380,9 @@
     // lgm://dem/z/x/y -> glacial ground (Terrarium); lgm://ice/z/x/y -> ice and snow overlay.
     maplibregl.addProtocol('lgm', async ({ url }) => {
       const [, kind, key] = url.match(/lgm:\/\/(\w+)\/(.+)/)
-      return { data: (await glacialTile(key))[kind].slice(0) }  // copy: MapLibre may transfer it
+      const rgba = new ImageData(new Uint8ClampedArray((await glacialTile(key))[kind]), SIZE, SIZE)
+      $('loading').classList.add('done')  // the first tile is in: show the map while the rest arrive
+      return { data: await createImageBitmap(rgba, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }) }
     })
 
     const name = key => ['coalesce', ['get', key], ['get', 'name']]
@@ -441,8 +447,8 @@
     const row = (k, v) => `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-value">${v}</span></div>`
     let current = null
     function show(r, fly = true) {
+      if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 60, bearing: 30, padding: 40, duration: current ? 2500 : 0 })
       current = r
-      if (fly) map.fitBounds([r.bounds.slice(0, 2), r.bounds.slice(2)], { pitch: 60, bearing: 30, padding: 40, duration: 2500 })
       $('region-name').textContent = r.name.replace('_', ' ')
       $('details').innerHTML =
         row('Climate', `PMIP4 LGM${r.mapped ? ', tied to mapped ice' : r.corrected ? ', fitted to mapped ice' : ''}`) +
@@ -451,7 +457,14 @@
         row('Overlap with mapped', `${Math.round(r.iou * 100)}%`) + row('Grid', `${r.dx / 1000} km`)
     }
 
-    fetch(`${DATA}/regions.json`).then(r => r.json()).then(all => {
+    const index = fetch(`${DATA}/regions.json`).then(r => r.json())
+    index.then(async all => {
+      const list = await Promise.all(all.filter(r => !names || names.includes(r.name)).map(async meta =>
+        ({ meta, blob: await (await fetch(`${DATA}/${meta.name}.png`)).blob() })))
+      const cfg = { dem: P.today.tiles[0], mapbox: !!TOKEN, size: SIZE }
+      workers.forEach(w => w.postMessage({ cfg, regions: list }))
+    })
+    index.then(all => {
       const regions = all.filter(listed), select = $('region')  // coarsest first
       select.innerHTML = regions.map((r, i) => `<option value="${i}">${r.name.replace('_', ' ')}</option>`).join('')
       select.style.display = regions.length > 1 ? '' : 'none'
@@ -462,7 +475,6 @@
       const start = regions.findIndex(r => r.name === window.LGM_START)  // config.js may name a starting region
       select.value = location.hash && here >= 0 ? here : start >= 0 ? start : regions.length - 1
       show(regions[select.value], !location.hash)
-      map.once('idle', () => $('loading').classList.add('done'))
     })
 
     // Ctrl+drag and Option/Alt+drag tilt and rotate. On a Mac, Ctrl+click is right-click, which browsers turn

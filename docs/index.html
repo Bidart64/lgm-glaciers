@@ -200,10 +200,11 @@
     }
 
     // The model at one point, written to g[o...]: ice surface (m), thickness (m, capped at 255), crevassing
-    // (0-1), mass balance (m/yr), flow-line value (0-1), stretching direction (radians).
-    const F = 6
+    // (0-1), mass balance (m/yr), flow-line value (0-1), and the stretching direction as the cosine and sine of
+    // twice its angle (which, unlike the angle, can be interpolated).
+    const F = 7
     function sample(lon, lat, g, o) {
-      g.set([-1e4, 0, 0, -9, 0, 0], o)
+      g.set([-1e4, 0, 0, -9, 0, 1, 0], o)
       let found = false
       for (const r of regions) {
         const [x, y] = laea(r, lon, lat)
@@ -214,8 +215,9 @@
         const m = [cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s), mix(r.h), mix(r.crev) / 255, (mix(r.mb) - 128) / 25, mix(r.phi) / 255]
         // Finer regions win, blended in over 10 cells from their edge so there is no seam.
         const t = found ? Math.min(1, Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10) : 1
-        for (let f = 0; f < 5; f++) g[o + f] += t * (m[f] - g[o + f])
-        g[o + 5] = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * Math.PI  // nearest: angles don't average
+        const a2 = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * 2 * Math.PI
+        m.push(Math.cos(a2), Math.sin(a2))
+        for (let f = 0; f < F; f++) g[o + f] += t * (m[f] - g[o + f])
         found = true
       }
     }
@@ -230,6 +232,7 @@
 
     const MIN_ICE = 8     // m: thinner ice is not drawn
     const VENEER = 30     // m: ice up to this thin follows the fine terrain instead of a flat surface
+    const CELL = 50       // m: spacing of crevasses
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
     async function tile(z, x, y) {
       const px = await pixels(await download(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y)))
@@ -258,8 +261,7 @@
         for (let col = 0; col < SIZE; col++) {
           const k = Math.min(col / STEP | 0, L - 2), u = col / STEP - k, i = row * SIZE + col
           const a = (j * L + k) * F, b = a + F, c = a + L * F, d = c + F
-          for (let f = 0; f < 5; f++) m[i * F + f] = (1 - v) * ((1 - u) * g[a + f] + u * g[b + f]) + v * ((1 - u) * g[c + f] + u * g[d + f])
-          m[i * F + 5] = g[(u + v < 1 ? a : d) + 5]
+          for (let f = 0; f < F; f++) m[i * F + f] = (1 - v) * ((1 - u) * g[a + f] + u * g[b + f]) + v * ((1 - u) * g[c + f] + u * g[d + f])
           const hm = m[i * F + 1]
           let h = 0
           if (hm > 0.5) {
@@ -282,11 +284,14 @@
       // ice below, flow bands and moraines along the flow lines, crevasses where the ice stretches, debris
       // towards the snouts. Ice-free ground above the snowline carries perennial snow.
       const showFine = clamp((25 - mpp) / 15)  // crevasses only where they can be resolved
+      const unit = 40075016 * 0.72 / (n * SIZE)
       for (let row = 0; row < SIZE; row++) {
         for (let col = 0; col < SIZE; col++) {
           const i = row * SIZE + col, o = i * F, h = thick[i], hm = m[o + 1], mb = m[o + 3]
           const gx = ddx(ground, i, col) / mpp, gy = ddy(ground, i, row) / mpp
-          const X = (x * SIZE + col) * mpp, Y = -(y * SIZE + row) * mpp  // ground metres, x east, y north
+          // Ground metres, x east and y north, on one scale everywhere (right at 44°N) so that textures
+          // continue across tiles and zoom levels.
+          const X = (x * SIZE + col) * unit, Y = -(y * SIZE + row) * unit
           const rough = noise(X / 70, Y / 70)
           if (h <= 0 && clamp(mb / 0.3) * clamp((1.0 - Math.hypot(gx, gy)) / 0.3) < 0.35 + 0.3 * rough) continue
           // The snowline wobbles; bare ice gets greyer with debris towards the snout.
@@ -297,18 +302,27 @@
           // Flow bands: some flow lines carry rock from the valley walls (medial moraines).
           const band = m[o + 4] * 18, id = Math.floor(band), dist = Math.abs(band - id - 0.5)
           const load = hash(id, 7)
-          tint(DEBRIS, bare * (load > 0.5 ? 0.5 * clamp(1 - dist / (0.05 + 0.25 * (load - 0.5))) : 0))
-          tint(DEEP, 0.10 * hash(id, 3) * (0.4 + 0.6 * bare))
+          const deep = clamp(hm / 80)  // thin ice near a margin has no flow lines to follow
+          tint(DEBRIS, deep * bare * (load > 0.5 ? 0.5 * clamp(1 - dist / (0.05 + 0.25 * (load - 0.5))) : 0))
+          tint(DEEP, deep * 0.08 * (0.5 + 0.5 * Math.sin(band * 6.283)) * (0.4 + 0.6 * bare))
           tint(DEBRIS, bare * clamp((-mb - 1.5) / 5 + (1 - clamp(hm / 60)) * 0.5) * (0.5 + 0.5 * rough))
-          // Crevasses: irregular dark-blue lines across the direction of stretching.
+          // Crevasses: separate cracks, each a lens 40-100 m long that tapers to its ends, lying across the
+          // direction of stretching. One may sit in each CELL-sized square of ground; more where the ice
+          // stretches faster.
           const cv = clamp((m[o + 2] - 0.25) / 0.5) * showFine * (1 - snow * 0.4)
           if (cv > 0) {
-            const ca = Math.cos(m[o + 5]), sa = Math.sin(m[o + 5])
-            const along = (X * ca + Y * sa) / 40 + 1.6 * noise(X / 120, Y / 120)
-            const across = (-X * sa + Y * ca) / 90
-            const width = 0.08 + 0.25 * cv * (0.5 + 0.5 * noise(across * 0.5, along * 0.2))
-            const f = along - Math.floor(along)
-            if (f < width) tint(DEEP, (1 - f / width) * cv * clamp(4 * noise(across * 0.4, Math.floor(along) * 0.7) - 1))
+            const a = Math.atan2(m[o + 6], m[o + 5]) / 2, ca = Math.cos(a), sa = Math.sin(a)
+            let depth = 0
+            for (let cj = Math.floor(Y / CELL) - 1; cj <= Y / CELL + 1; cj++) {
+              for (let ci = Math.floor(X / CELL) - 1; ci <= X / CELL + 1; ci++) {
+                if (hash(ci + 0.3, cj) > 0.4 + 0.6 * cv) continue
+                const px = X - (ci + hash(ci, cj)) * CELL, py = Y - (cj + hash(cj, ci + 0.7)) * CELL
+                const along = (-px * sa + py * ca) / (CELL * (0.4 + 0.6 * hash(ci + 0.6, cj + 0.1))), across = Math.abs(px * ca + py * sa)
+                const width = Math.max(2 + 5 * cv * hash(ci, cj + 0.5), 0.6 * mpp) * (1 - along * along)
+                if (width > 0) depth = Math.max(depth, clamp(1 - across / width))
+              }
+            }
+            tint(DEEP, depth * (0.5 + 0.5 * cv) * showFine)
           }
           // Sun from the north-west, 40° up; the gentle relief of ice is exaggerated so it reads. Shadows on
           // snow and ice are blue: they are lit by the sky.

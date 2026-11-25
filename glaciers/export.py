@@ -11,6 +11,7 @@ from .dem import LAEA
 from .model import GLACIER
 
 CREVASSE_STRAIN = 0.02  # 1/yr: tensile strain rate at which crevasses are fully developed
+SMOOTH = 1.5            # grid cells: the exported ice surface is smoothed over this
 
 
 def flow_lines(vx, vy):
@@ -29,7 +30,8 @@ def flow_lines(vx, vy):
 
 def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
     """One PNG of three bands stacked north to south, each the size of the grid:
-    1. R,G = ice surface + 10000 (m, 16-bit), B = glacier thickness (m, capped at 255; 0 under GLACIER)
+    1. R,G = (ice surface + 1000 m) × 8, 16-bit: steps of 1/8 m, fine enough not to show as terraces when
+       the gentle ice surface is lit; B = glacier thickness (m, capped at 255; 0 under GLACIER)
     2. R = crevassing (largest tensile strain rate), G = direction of that stretching (0-255 for 0-180°,
        east = 0, anticlockwise; crevasses open across it), B = 128 + 25 × mass balance (m/yr): above 128 is
        snow-covered accumulation area, below is bare ice
@@ -43,8 +45,11 @@ def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
     dist, near = distance_transform_edt(~ice, return_indices=True)
     # Just outside the ice (valley walls), carry the nearest ice surface rather than the rock, so the
     # browser's interpolated surface stays flat until it meets the walls instead of ramping up them.
-    surface = np.where(dist > 2, bed0, (bed0 + H)[tuple(near)])
-    surface = np.clip(np.round(surface + 10000), 0, 65535).astype(np.uint32)
+    # Ice cannot hold bumps much smaller than its own thickness, but the model's surface is rough from cell to
+    # cell (it follows a bed sampled from fine terrain), which shows as blocks when lit. Smooth it within the ice.
+    top = gaussian_filter(ice * (bed0 + H), SMOOTH) / np.maximum(gaussian_filter(ice * 1.0, SMOOTH), 1e-6)
+    surface = np.where(dist > 2, bed0, top[tuple(near)])
+    surface = np.clip(np.round((surface + 1000) * 8), 0, 65535).astype(np.uint32)
 
     dvx_dy, dvx_dx = np.gradient(vx, dx)
     dvy_dy, dvy_dx = np.gradient(vy, dx)
@@ -76,5 +81,5 @@ def read(web: Path, name, lon, lat):
     px = np.asarray(Image.open(web / "data" / f"{name}.png"))[:meta["ny"]].astype(np.float64)
     x, y = LAEA(meta["lon0"], meta["lat0"]).forward(lon, lat)
     rc = [(meta["y1"] - y) / meta["dx"], (x - meta["x0"]) / meta["dx"]]  # row 0 = north
-    s = map_coordinates(px[..., 0] * 256 + px[..., 1] - 10000, rc, order=1, mode="nearest")
+    s = map_coordinates((px[..., 0] * 256 + px[..., 1]) / 8 - 1000, rc, order=1, mode="nearest")
     return s, map_coordinates(px[..., 2], rc, order=0, mode="nearest") > 0

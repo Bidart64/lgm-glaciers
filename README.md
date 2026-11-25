@@ -63,8 +63,9 @@ and cache about 400 MB in `data/`.
    Only ice thicker than 20 m counts as glacier; thinner ice is a film on slopes above the snowline. One
    range per region is held out of the fit to test it. The ice is therefore a reconstruction constrained
    by field evidence, not a pure prediction.
-6. **Export** (`glaciers/export.py`): one small PNG per region with the ice surface, thickness, mass balance,
-   crevassing and flow lines (`web/data/<region>.png` plus `.json`).
+6. **Export** (`glaciers/export.py`): one small PNG per region with the ice surface (smoothed over 1.5
+   cells: ice cannot hold bumps much smaller than its thickness), thickness, mass balance, crevassing and
+   flow lines (`web/data/<region>.png` plus `.json`).
 7. **Viewer** (`web/index.html`, MapLibre): for each map tile, web workers take present-day terrain (~10 m
    in the US), raise it to the computed ice surface wherever the ice buries it, and draw that as 3D terrain
    with a painted ice overlay. The model runs at 200-500 m, but ice margins, nunataks and valley glaciers
@@ -82,7 +83,7 @@ and cache about 400 MB in `data/`.
 | Region | Grid | Computed ice | Mapped ice | Overlap | Held-out range |
 |---|---|---|---|---|---|
 | North America (no correction) | 20 km | 16.7M km² | 18.6M km² | 84% | – |
-| Idaho | 500 m | 165,000 km² | 147,000 km² | 61% | Lemhi Range 28%, Pioneer Mountains 64% |
+| Idaho | 500 m | 160,000 km² | 147,000 km² | 62% | Lemhi Range 28%, Pioneer Mountains 64% |
 | Sawtooth Range | 200 m | 3,800 km² | 5,300 km² | 60% | White Clouds 68% |
 | Lost River Range | 200 m | 3,400 km² | 4,000 km² | 47% | Pioneer Mountains 68% |
 | Wind River Range | 200 m | 10,100 km² | 9,800 km² | 71% | East-side valleys 46% |
@@ -90,13 +91,14 @@ and cache about 400 MB in `data/`.
 For comparison, a published model of the Alps at the LGM reaches about 72% at best, and automated
 reconstructions average about 48%.
 
-- Idaho's overlap is 73% north of 47°N, where the ice-sheet lobes are, and 42% in the mountain ranges to
+- Idaho's overlap is 74% north of 47°N, where the ice-sheet lobes are, and 42% in the mountain ranges to
   the south; the 200 m runs of single ranges do better there.
 - The overlap is partly a fit: the correction was chosen using the mapped outlines. The held-out ranges
   are the independent test.
-- Ice thickness is not constrained by the mapped outlines. The outlines show an icefield over most of the
-  Sawtooth area, and the model can only cover Stanley Basin with a dome over 1 km thick that buries most
-  of the range. Either the outlines are generous there or the model's ice is too stiff.
+- Ice thickness is not constrained by the mapped outlines. The model buries most of the Sawtooths and the
+  Wind Rivers under ice more than 1 km thick. Field studies do describe a plateau ice cap with piedmont
+  lobes on the Wind Rivers, and Sawtooth lobes reaching up to 20 km into Stanley Basin, but give no
+  thickness to check against.
 - Where a basin is close to filling with ice the result is sensitive: in the Sawtooths a few tenths of a
   degree, or 10,000 years instead of 3,000, turn valley glaciers into an ice cap over the whole area.
 - **Mapped mode** (`--mapped`) gives up on prediction: ice is 4 °C colder inside the mapped extent and

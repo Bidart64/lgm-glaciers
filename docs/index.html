@@ -161,7 +161,7 @@
       regions = (await Promise.allSettled(list.map(async meta => {
         const px = await decode(`${cfg.data}/${meta.name}.png`), n = meta.nx * meta.ny
         const band = (b, c) => Uint8Array.from({ length: n }, (_, i) => px[4 * (b * n + i) + c])
-        const s = Float32Array.from({ length: n }, (_, i) => px[4 * i] * 256 + px[4 * i + 1] - 10000)
+        const s = Float32Array.from({ length: n }, (_, i) => (px[4 * i] * 256 + px[4 * i + 1]) / 8 - 1000)
         return { ...meta, s, h: band(0, 2), crev: band(1, 0), ang: band(1, 1), mb: band(1, 2), phi: band(2, 0),
                  lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
       }))).filter(r => r.status === 'fulfilled').map(r => r.value)

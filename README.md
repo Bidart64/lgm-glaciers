@@ -1,9 +1,9 @@
 # LGM Glaciers
 
 Computes where glaciers should have been at the Last Glacial Maximum (~21,000 years ago) in Idaho, the
-Wind River Range and around Mount Rainier, and shows them in 3D on satellite imagery.
+Wind River Range, around Mount Rainier and in the Pyrenees, and shows them in 3D on satellite imagery.
 
-**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges, Mount Rainier;
+**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges, Mount Rainier, the Pyrenees;
 no account needed)
 
 ## Run
@@ -18,7 +18,7 @@ cp web/config.example.js web/config.js          # optional: a Mapbox token (Mapb
 python -m http.server -d web                    # open http://localhost:8000
 ```
 
-The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawtooth`, `wind_river`, `rainier`):
+The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawtooth`, `wind_river`, `rainier`; `pyrenees` at 300 m):
 
 ```bash
 python -m glaciers.fit sawtooth                 # ~15 min
@@ -29,7 +29,8 @@ python -m glaciers.demo                         # standalone demo in docs/ (free
 
 Without a Mapbox token the viewer uses free sources: USGS National Map imagery (US only), AWS Terrain
 Tiles and OpenFreeMap names. The demo in `docs/` runs that way, so anyone can open it. Controls follow
-`../maps`: reset view, 3D terrain, glaciers on/off, viewing angle, place names and mapped extent. Tilt and
+`../maps`: reset view, 3D terrain, glaciers on/off, viewing angle, place names, region details and mapped
+extent. Click the map for a point's coordinates, its elevation with the ice, and the ice thickness there. Tilt and
 rotate with Ctrl+drag, Option+drag (Alt on Windows) or right-drag. The URL keeps the view, so views can be
 bookmarked and shared.
 
@@ -42,7 +43,7 @@ and cache about 400 MB in `data/`.
    an equal-area grid per region; ETOPO 2022 bedrock for the 20 km ice-sheet grid. Idaho holds its northern
    edge at the ice-sheet run's thickness, so the Cordilleran lobes can flow in.
 2. **Climate** (`glaciers/dem.py`, `glaciers/pmip.py`): present-day monthly temperature and precipitation
-   (PRISM 800 m normals; WorldClim for the ice sheets) plus the LGM-minus-preindustrial change from four
+   (PRISM 800 m normals in the US; WorldClim at 4.6 km elsewhere and at 18 km for the ice sheets) plus the LGM-minus-preindustrial change from four
    PMIP4 climate models (AWI-ESM-1-1-LR, INM-CM4-8, MIROC-ES2L, MPI-ESM1-2-LR; ensemble mean). This is the
    standard "delta method". Temperature changes are reduced to sea level with each model's own LGM
    orography, and precipitation changes are applied as ratios. Temperatures are then corrected to the
@@ -87,6 +88,7 @@ and cache about 400 MB in `data/`.
 | Sawtooth Range | 200 m | 3,800 km² | 5,300 km² | 60% | White Clouds 68% |
 | Lost River Range | 200 m | 3,400 km² | 4,000 km² | 47% | Pioneer Mountains 68% |
 | Wind River Range | 200 m | 10,100 km² | 9,800 km² | 71% | East-side valleys 46% |
+| Pyrenees | 300 m | 6,500 km² | 8,600 km² | 58% | Eastern Pyrenees 58% |
 | Mount Rainier | 200 m | 4,800 km² | 1,700 km² (valley tongues only) | 35% below 1,100 m | Goat Rocks 68% |
 
 For comparison, a published model of the Alps at the LGM reaches about 72% at best, and automated
@@ -107,6 +109,8 @@ reconstructions average about 48%.
   the mapped tongues but also puts ice on the ridges between them. The ice-sheet outline is not used there
   (it covers the Cascades whole), and the Puget lobe of the ice sheet, which reached the north-west corner
   a few thousand years later, is not modelled.
+- The Pyrenees have no 800 m climate normals, so their snowfall pattern comes from 4.6 km cells, and their
+  correction reaches the fit's −4 °C limit in places.
 - Where a basin is close to filling with ice the result is sensitive: in the Sawtooths a few tenths of a
   degree, or 10,000 years instead of 3,000, turn valley glaciers into an ice cap over the whole area.
 - **Mapped mode** (`--mapped`) gives up on prediction: ice is 4 °C colder inside the mapped extent and
@@ -136,7 +140,7 @@ Everything used to recreate the LGM ice, and what each is used for.
 
 **Present-day climate**
 - PRISM 1991-2020 monthly normals, 800 m: PRISM Climate Group, Oregon State University, https://prism.oregonstate.edu
-- WorldClim 2.1 (ice-sheet grid): Fick & Hijmans 2017, *International Journal of Climatology* 37, 4302-4315.
+- WorldClim 2.1 (outside the US: 4.6 km for the Pyrenees, 18 km for the ice-sheet grid): Fick & Hijmans 2017, *International Journal of Climatology* 37, 4302-4315.
 
 **Terrain**
 - Terrain Tiles (Mapzen, hosted as AWS Open Data; 10-30 m sources in the US): https://registry.opendata.aws/terrain-tiles/
@@ -159,5 +163,6 @@ Everything used to recreate the LGM ice, and what each is used for.
   *Journal of Glaciology* 51, 173-175.
 
 **Viewer**
-- MapLibre GL JS; imagery from the USGS National Map; place names from OpenFreeMap / OpenMapTiles /
+- MapLibre GL JS; imagery from the USGS National Map (US) and Sentinel-2 cloudless by EOX (elsewhere;
+  contains modified Copernicus Sentinel data 2016); place names from OpenFreeMap / OpenMapTiles /
   OpenStreetMap; with a token, imagery, terrain and names from Mapbox instead.

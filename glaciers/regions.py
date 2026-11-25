@@ -18,6 +18,7 @@ REGIONS = {
     "wind_river":    (-109.55, 42.95, 75, 95, 0.2, 3000),
     "sawtooth":      (-114.95, 44.10, 40, 50, 0.2, 3000),
     "rainier":       (-121.80, 46.80, 60, 50, 0.2, 3000),
+    "pyrenees":      (0.60, 42.70, 220, 80, 0.3, 3000),
 }
 # Nested regions take ice flowing in across their northern edge from a coarser run (Cordilleran lobes
 # entering Idaho from British Columbia). Other edges stay ice-free: the coarse run over-glaciates the

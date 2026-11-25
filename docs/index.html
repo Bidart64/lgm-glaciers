@@ -62,6 +62,11 @@
     .compass:hover span { color: var(--accent); }
     /* zoom buttons above the compass; the attribution stays along the bottom */
     .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group { margin: 0 1.5rem 112px 0; }
+    .maplibregl-popup-content { background: var(--overlay-bg); color: var(--text); border: 1px solid var(--overlay-border);
+                                border-radius: 12px; padding: 0.6rem 2rem 0.6rem 0.9rem; min-width: 210px;
+                                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+    .maplibregl-popup-tip { display: none; }
+    .maplibregl-popup-close-button { color: var(--text-muted); font-size: 1.1rem; padding: 0.2rem 0.5rem; }
     .loading-overlay {
       position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       background: rgba(0, 0, 0, 0.8); z-index: 100; transition: opacity 0.3s;
@@ -390,7 +395,10 @@
       // two names for the same server: browsers open only six connections to each
       today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
                                               'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'] },
-      imagery: { tileSize: 256, maxzoom: 16, tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
+      imagery: { tileSize: 256, maxzoom: 16, bounds: [-170, 17, -64, 72],  // sharp, but United States only
+                 tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
+      world: { tileSize: 256, maxzoom: 14, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg'],  // everywhere else
+               attribution: 'Sentinel-2 cloudless by EOX (contains modified Copernicus Sentinel data 2016)' },
       credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS',
       glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
       names: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
@@ -443,23 +451,27 @@
     const name = key => ['coalesce', ['get', key], ['get', 'name']]
     // 3D ground: the glacial world (today's terrain raised to the ice surface), or today's terrain alone.
     let glaciersOn = true
-    const terrain = () => ({ source: glaciersOn ? 'terrain' : 'today', exaggeration: 1.4 })
+    const EXAGGERATION = 1.4
+    const terrain = () => ({ source: glaciersOn ? 'terrain' : 'today', exaggeration: EXAGGERATION })
     const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: SIZE, encoding: 'terrarium', maxzoom: P.demMaxzoom }
     const shade = { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' }
     const map = new maplibregl.Map({
       container: 'map', center: [-113.65, 44.05], zoom: 9, pitch: 60, bearing: 30, maxPitch: 80, hash: true,  // URL keeps the view
+      attributionControl: { compact: true },
       style: {
         version: 8,
         glyphs: P.glyphs,
         sources: {
           satellite: { type: 'raster', ...P.imagery,
                        attribution: `${P.credit} · Ice model: Mapzen terrain, ETOPO 2022, PRISM, WorldClim, PMIP4` },
+          ...(P.world && { world: { type: 'raster', ...P.world } }),
           ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: SIZE, maxzoom: P.demMaxzoom },
           terrain: dem,
           today: { type: 'raster-dem', tileSize: SIZE, maxzoom: P.demMaxzoom, ...P.today },
           names: P.names,
         },
         layers: [
+          ...(P.world ? [{ id: 'world', type: 'raster', source: 'world' }] : []),
           { id: 'satellite', type: 'raster', source: 'satellite' },
           { id: 'ice', type: 'raster', source: 'ice', paint: { 'raster-resampling': 'linear' } },
           { id: 'shade-today', type: 'hillshade', source: 'today', layout: { visibility: 'none' }, paint: shade },
@@ -471,12 +483,15 @@
             layout: { 'text-field': name(P.towns.name), 'text-font': P.fonts.town,
                       'text-size': ['match', P.towns.type, 'city', 15, 'town', 13, 11] },
             paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(15, 20, 30, 0.85)', 'text-halo-width': 1.5 } },
-          { id: 'peaks', type: 'symbol', source: 'names', 'source-layer': P.peaks.layer, minzoom: 9,
+          // As many peaks as fit: names alone until zoom 11 (heights below them take room), packed closely.
+          { id: 'peaks', type: 'symbol', source: 'names', 'source-layer': P.peaks.layer, minzoom: 8,
             filter: ['all', ['has', 'name'], P.peaks.filter],
-            layout: { 'text-field': ['format', '▲ ', {}, name(P.peaks.name), {},
-                                     ['case', ['has', P.peaks.ele], ['concat', '\n', ['to-string', ['get', P.peaks.ele]], ' m'], ''],
-                                     { 'font-scale': 0.8 }],
-                      'text-font': P.fonts.peak, 'text-size': 12, 'text-anchor': 'bottom',
+            layout: { 'text-field': ['step', ['zoom'], ['concat', '▲ ', name(P.peaks.name)], 11,
+                                     ['format', '▲ ', {}, name(P.peaks.name), {},
+                                      ['case', ['has', P.peaks.ele], ['concat', '\n', ['to-string', ['get', P.peaks.ele]], ' m'], ''],
+                                      { 'font-scale': 0.8 }]],
+                      'text-font': P.fonts.peak, 'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 12, 12],
+                      'text-anchor': 'bottom', 'text-padding': 0,
                       'symbol-sort-key': ['-', 0, ['coalesce', ['get', P.peaks.ele], 0]] },  // highest peaks win collisions
             paint: { 'text-color': '#fff6e0', 'text-halo-color': 'rgba(40, 25, 10, 0.85)', 'text-halo-width': 1.5 } },
         ],
@@ -529,6 +544,29 @@
       const start = regions.findIndex(r => r.name === window.LGM_START)  // config.js may name a starting region
       select.value = location.hash && here >= 0 ? here : start >= 0 ? start : regions.length - 1
       show(regions[select.value], !location.hash)
+    })
+
+    // Click a point: its coordinates, the height of the surface there (ice included) and how much of that is ice.
+    async function groundToday({ lng, lat }) {  // from the terrain tile under the point
+      const n = 2 ** 12, x = (lng + 180) / 360 * n, y = (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * n
+      const url = P.today.tiles[0].replace('{z}', 12).replace('{x}', Math.floor(x)).replace('{y}', Math.floor(y))
+      const img = await createImageBitmap(await (await fetch(url)).blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
+      const ctx = new OffscreenCanvas(1, 1).getContext('2d')
+      ctx.drawImage(img, -Math.floor((x % 1) * img.width), -Math.floor((y % 1) * img.height))
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+      return TOKEN ? (r * 65536 + g * 256 + b) * 0.1 - 10000 : r * 256 + g + b / 256 - 32768
+    }
+    const popup = new maplibregl.Popup({ maxWidth: 'none' })
+    map.on('click', async ({ lngLat }) => {
+      const metres = v => `${Math.round(v).toLocaleString()} m`
+      const surface = map.terrain && map.terrain.getElevationForLngLatZoom(lngLat, map.transform.tileZoom) / EXAGGERATION
+      const at = row('Latitude', lngLat.lat.toFixed(5)) + row('Longitude', lngLat.lng.toFixed(5))
+      popup.setLngLat(lngLat).setHTML(at + (surface ? row('Elevation', metres(surface)) : '')).addTo(map)
+      const ground = await groundToday(lngLat).catch(() => null)
+      if (ground === null || !popup.isOpen()) return
+      const ice = glaciersOn && surface ? Math.max(surface - ground, 0) : 0
+      popup.setHTML(at + row(ice > 5 ? 'Elevation with ice' : 'Elevation', metres(ice > 5 ? surface : ground)) +
+                    (ice > 5 ? row('Ice', metres(ice)) + row('Ground today', metres(ground)) : ''))
     })
 
     // Ctrl+drag and Option/Alt+drag tilt and rotate. On a Mac, Ctrl+click is right-click, which browsers turn

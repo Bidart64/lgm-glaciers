@@ -111,18 +111,20 @@ def load_bed(proj, x, y, dx):
     return map_coordinates(z, rc, order=1, mode="nearest")
 
 
-WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_{}.zip"
+WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_{}_{}.zip"
 
 
-def _worldclim(var):
-    """WorldClim 2.1 10-arc-minute grids (n, 1080, 2160) with oceans filled from the nearest land."""
-    path = CACHE / "worldclim" / f"{var}.zip"
+def _worldclim(var, per_deg, rows, cols):
+    """A window of the WorldClim 2.1 grids at 10 arc-minutes (per_deg 6) or 2.5 (24), oceans filled from the
+    nearest land."""
+    res = {6: "10m", 24: "2.5m"}[per_deg]
+    path = CACHE / "worldclim" / (f"{var}.zip" if per_deg == 6 else f"{var}_{res}.zip")
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"downloading WorldClim {var}")
-        urllib.request.urlretrieve(WORLDCLIM.format(var), path)
+        print(f"downloading WorldClim {var} ({res})")
+        urllib.request.urlretrieve(WORLDCLIM.format(res, var), path)
     with zipfile.ZipFile(path) as z:
-        a = np.stack([np.asarray(Image.open(io.BytesIO(z.read(n)))) for n in sorted(z.namelist()) if n.endswith(".tif")])
+        a = np.stack([np.asarray(Image.open(io.BytesIO(z.read(n))))[rows, cols] for n in sorted(z.namelist()) if n.endswith(".tif")])
     _, (i, j) = distance_transform_edt(a[0] < -1e4, return_indices=True)  # no-data value differs per variable
     return a[:, i, j].astype(np.float64)
 
@@ -157,13 +159,17 @@ PRISM_SHIFT = np.array([1.04, 0.09, 0.53, 0.22, 0.36, 0.14, 1.11, 0.77, 0.72, -0
 def load_climate(proj, x, y, bed=None):
     """Present-day monthly temperature (°C), precipitation (mm) and their reference elevation.
 
-    With `bed` (the bedrock on this grid), PRISM's 800 m normals replace WorldClim inside the contiguous US.
-    They resolve mountain snowfall that WorldClim's 18 km cells smear into the valleys.
+    With `bed` (the bedrock on this grid, for mountain regions), WorldClim is read at 4.6 km and PRISM's 800 m
+    normals replace it inside the contiguous US: they resolve mountain snowfall that coarser cells smear into
+    the valleys.
     """
     lon, lat = proj.inverse(*np.meshgrid(x, y))
-    rc = [(90 - lat) * 6 - 0.5, (lon + 180) * 6 - 0.5]
+    per_deg = 6 if bed is None else 24  # 18 km cells for the ice sheets, 4.6 km for mountain regions
+    r, c = (90 - lat) * per_deg - 0.5, (lon + 180) * per_deg - 0.5
+    rows, cols = (slice(max(int(v.min()) - 2, 0), int(v.max()) + 3) for v in (r, c))
     sample = lambda a, rc: np.array([map_coordinates(m, rc, order=1, mode="nearest", cval=np.nan) for m in a])
-    T, P, z_ref = sample(_worldclim("tavg"), rc), sample(_worldclim("prec"), rc), sample(_worldclim("elev"), rc)[0]
+    T, P, z = (sample(_worldclim(v, per_deg, rows, cols), [r - rows.start, c - cols.start]) for v in ("tavg", "prec", "elev"))
+    z_ref = z[0]
     if bed is not None:
         r, c = (PRISM_NORTH - lat) * 120 - 0.5, (lon - PRISM_WEST) * 120 - 0.5
         rows = slice(max(int(r.min()) - 2, 0), min(int(r.max()) + 3, 3105))

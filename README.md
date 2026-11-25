@@ -1,9 +1,9 @@
 # LGM Glaciers
 
-Computes where glaciers should have been at the Last Glacial Maximum (~21,000 years ago) in Idaho and the
-Wind River Range, and shows them in 3D on satellite imagery.
+Computes where glaciers should have been at the Last Glacial Maximum (~21,000 years ago) in Idaho, the
+Wind River Range and around Mount Rainier, and shows them in 3D on satellite imagery.
 
-**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges;
+**Live demo:** https://bidart64.github.io/lgm-glaciers/ (Idaho, the Lost River, Sawtooth and Wind River ranges, Mount Rainier;
 no account needed)
 
 ## Run
@@ -18,7 +18,7 @@ cp web/config.example.js web/config.js          # optional: a Mapbox token (Mapb
 python -m http.server -d web                    # open http://localhost:8000
 ```
 
-The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawtooth`, `wind_river`):
+The single ranges run on 200 m grids, each with its own fit (`lost_river`, `sawtooth`, `wind_river`, `rainier`):
 
 ```bash
 python -m glaciers.fit sawtooth                 # ~15 min
@@ -87,6 +87,7 @@ and cache about 400 MB in `data/`.
 | Sawtooth Range | 200 m | 3,800 km² | 5,300 km² | 60% | White Clouds 68% |
 | Lost River Range | 200 m | 3,400 km² | 4,000 km² | 47% | Pioneer Mountains 68% |
 | Wind River Range | 200 m | 10,100 km² | 9,800 km² | 71% | East-side valleys 46% |
+| Mount Rainier | 200 m | 4,800 km² | 1,700 km² (valley tongues only) | 35% below 1,100 m | Goat Rocks 68% |
 
 For comparison, a published model of the Alps at the LGM reaches about 72% at best, and automated
 reconstructions average about 48%.
@@ -99,6 +100,13 @@ reconstructions average about 48%.
   Wind Rivers under ice more than 1 km thick. Field studies do describe a plateau ice cap with piedmont
   lobes on the Wind Rivers, and Sawtooth lobes reaching up to 20 km into Stanley Basin, but give no
   thickness to check against.
+- **Mount Rainier** stands at its pre-collapse height: a cone is put back on today's summit up to about
+  4,900 m (3.4 km³ of rock), in the model and in the 3D view. Around Rainier the outlines draw only the
+  valley tongues: nothing on the mountain itself, which still carries glaciers, nor on slopes above the
+  ice-age snowline. So the fit and the score use ground below 1,100 m only, where the model covers 73% of
+  the mapped tongues but also puts ice on the ridges between them. The ice-sheet outline is not used there
+  (it covers the Cascades whole), and the Puget lobe of the ice sheet, which reached the north-west corner
+  a few thousand years later, is not modelled.
 - Where a basin is close to filling with ice the result is sensitive: in the Sawtooths a few tenths of a
   degree, or 10,000 years instead of 3,000, turn valley glaciers into an ice cap over the whole area.
 - **Mapped mode** (`--mapped`) gives up on prediction: ice is 4 °C colder inside the mapped extent and
@@ -109,3 +117,47 @@ reconstructions average about 48%.
   That is unstable at practical time steps and created ice (in the Sawtooths at 200 m, nearly twice the
   area and over ten times the volume), which
   the fitted corrections then hid. The numbers above come from the converged solver.
+
+## Sources
+
+Everything used to recreate the LGM ice, and what each is used for.
+
+**Field evidence of LGM ice extent** (fitting and scoring; the viewer's "mapped extent" overlay)
+- GLACIMONTIS, reconstructed mountain paleoglaciers worldwide: Lima et al. 2026, *Scientific Data*.
+  Data: https://doi.org/10.5281/zenodo.15600659
+- Northern Hemisphere ice sheets, LGM best estimate: Batchelor et al. 2019, "The configuration of Northern
+  Hemisphere ice sheets through the Quaternary", *Nature Communications* 10, 3713. Data: https://osf.io/7jen3/
+
+**Ice-age climate**
+- PMIP4 / CMIP6 `lgm` and `piControl` simulations from AWI-ESM-1-1-LR, INM-CM4-8, MIROC-ES2L and
+  MPI-ESM1-2-LR, downloaded from the Earth System Grid Federation (DKRZ node). Overview: Kageyama et al. 2021,
+  "The PMIP4 Last Glacial Maximum experiments", *Climate of the Past* 17, 1065-1089.
+- Tested and not used: CHELSA-TraCE21k (Karger et al. 2023, *Climate of the Past*).
+
+**Present-day climate**
+- PRISM 1991-2020 monthly normals, 800 m: PRISM Climate Group, Oregon State University, https://prism.oregonstate.edu
+- WorldClim 2.1 (ice-sheet grid): Fick & Hijmans 2017, *International Journal of Climatology* 37, 4302-4315.
+
+**Terrain**
+- Terrain Tiles (Mapzen, hosted as AWS Open Data; 10-30 m sources in the US): https://registry.opendata.aws/terrain-tiles/
+- ETOPO 2022 bedrock (ice-sheet grid): NOAA National Centers for Environmental Information,
+  https://doi.org/10.25921/fd45-gt74
+
+**Mount Rainier's lost summit**
+- The Osceola collapse about 5,600 years ago: Vallance & Scott 1997, "The Osceola Mudflow from Mount Rainier",
+  *GSA Bulletin* 109, 143-163. The pre-collapse height of about 4,900 m (16,000 ft) is the commonly quoted
+  USGS estimate; the cone put back here is a plain cone of about that height, not a geological reconstruction.
+
+**Checks against field studies** (not model inputs)
+- Wind River ice cap: Birkel et al. 2012, "Climate inferences from a glaciological reconstruction of the late
+  Pleistocene Wind River Ice Cap", *Arctic, Antarctic, and Alpine Research* 44, 265-276.
+- Sawtooth Valley glaciation: Thackray et al. 2004, *Geology* 32, 225-228; USGS Open-File Report 2004-1222.
+
+**Methods**
+- Shallow-ice approximation: Hutter 1983, *Theoretical Glaciology*.
+- Positive-degree-day melt with the closed-form daily-variability integral: Calov & Greve 2005,
+  *Journal of Glaciology* 51, 173-175.
+
+**Viewer**
+- MapLibre GL JS; imagery from the USGS National Map; place names from OpenFreeMap / OpenMapTiles /
+  OpenStreetMap; with a token, imagery, terrain and names from Mapbox instead.

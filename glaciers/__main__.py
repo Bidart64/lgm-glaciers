@@ -25,11 +25,12 @@ def main():
     vx, vy = model.surface_velocity(H, s, dx, model.sliding(bed0, dx))
     ice, mapped = H > model.GLACIER, r["mapped"]
     km2 = lambda mask: round(mask.sum() * dx * dx / 1e6)
-    iou = (ice & mapped).sum() / max((ice | mapped).sum(), 1)  # agreement with field evidence
+    known = r["known"]  # agreement with field evidence, where there is any
+    iou = (ice & mapped & known).sum() / max(((ice | mapped) & known).sum(), 1)
     print(f"done in {time.time() - t0:.0f}s: ice {km2(ice):,} km2, max {H.max():,.0f} m thick")
     print(f"mapped LGM ice {km2(mapped):,} km2, overlap (intersection / union) {iou:.2f}")
 
-    export.write(WEB, a.region, r["proj"], x, y, dx, bed0, H, vx, vy, model.mass_balance(s, *r["natural"]),
+    export.write(WEB, a.region, r["proj"], x, y, dx, bed0, r["rebuilt"], H, vx, vy, model.mass_balance(s, *r["natural"]),
                  {"corrected": r["corrected"], "mapped": a.mapped, "ice_km2": km2(ice), "max_ice_m": round(float(H.max())),
                   "mapped_km2": km2(mapped), "iou": round(float(iou), 2)})
     print(f"wrote {WEB / 'data' / a.region}.png\nview:  python -m http.server -d web  then open http://localhost:8000")

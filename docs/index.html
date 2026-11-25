@@ -51,6 +51,7 @@
     .detail-key { font-size: 0.8125rem; color: var(--text-muted); }
     .detail-value { font-size: 0.875rem; font-weight: 500; text-align: right; }
     .note { margin-top: 0.75rem; font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
+    .note a { color: var(--accent); }
     .compass { position: absolute; right: 1.5rem; bottom: 2.4rem; width: 84px; padding: 0.5rem 0.5rem 0.4rem;
                display: flex; flex-direction: column; align-items: center; cursor: pointer; color: var(--text); }
     .compass svg { width: 64px; height: 64px; transition: transform 0.1s linear; }
@@ -114,7 +115,8 @@
   <div class="info-panel glass">
     <h3 id="region-name"></h3>
     <div id="details"></div>
-    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).</p>
+    <p class="note">Mapped extent: Batchelor et al. 2019 (ice sheets), GLACIMONTIS 2026 (mountain glaciers).
+      <a href="https://github.com/Bidart64/lgm-glaciers#sources" target="_blank" rel="noopener">All sources</a></p>
   </div>
 
   <div class="compass glass" id="compass" title="Facing direction; click to face north">
@@ -165,15 +167,15 @@
     async function load(list) {
       regions = (await Promise.allSettled(list.map(async ({ meta, blob }) => {
         const px = await pixels(blob), n = meta.nx * meta.ny
-        const s = new Float32Array(n), bands = [[0, 2], [1, 0], [1, 1], [1, 2], [2, 0]].map(() => new Uint8Array(n))
+        const s = new Float32Array(n), bands = [0, 1, 2, 3, 4, 5].map(() => new Uint8Array(n))
         for (let i = 0; i < n; i++) {
           s[i] = (px[4 * i] * 256 + px[4 * i + 1]) / 8 - 1000
           bands[0][i] = px[4 * i + 2]                                                               // thickness
           bands[1][i] = px[4 * (n + i)]; bands[2][i] = px[4 * (n + i) + 1]; bands[3][i] = px[4 * (n + i) + 2]
-          bands[4][i] = px[4 * (2 * n + i)]                                                         // flow lines
+          bands[4][i] = px[4 * (2 * n + i)]; bands[5][i] = px[4 * (2 * n + i) + 1]                  // flow lines, rebuilt ground
         }
-        const [h, crev, ang, mb, phi] = bands
-        return { ...meta, s, h, crev, ang, mb, phi, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
+        const [h, crev, ang, mb, phi, up] = bands
+        return { ...meta, s, h, crev, ang, mb, phi, up, lam0: meta.lon0 * Math.PI / 180, phi0: meta.lat0 * Math.PI / 180 }
       }))).filter(r => r.status === 'fulfilled').map(r => r.value)
     }
 
@@ -201,10 +203,10 @@
 
     // The model at one point, written to g[o...]: ice surface (m), thickness (m, capped at 255), crevassing
     // (0-1), mass balance (m/yr), flow-line value (0-1), and the stretching direction as the cosine and sine of
-    // twice its angle (which, unlike the angle, can be interpolated).
-    const F = 7
+    // twice its angle (which, unlike the angle, can be interpolated), height of rebuilt ground above today's (m).
+    const F = 8
     function sample(lon, lat, g, o) {
-      g.set([-1e4, 0, 0, -9, 0, 1, 0], o)
+      g.set([-1e4, 0, 0, -9, 0, 1, 0, 0], o)
       let found = false
       for (const r of regions) {
         const [x, y] = laea(r, lon, lat)
@@ -216,7 +218,7 @@
         // Finer regions win, blended in over 10 cells from their edge so there is no seam.
         const t = found ? Math.min(1, Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10) : 1
         const a2 = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * 2 * Math.PI
-        m.push(Math.cos(a2), Math.sin(a2))
+        m.push(Math.cos(a2), Math.sin(a2), mix(r.up) * 4)
         for (let f = 0; f < F; f++) g[o + f] += t * (m[f] - g[o + f])
         found = true
       }
@@ -256,14 +258,20 @@
         elev[i] = Math.max(0, cfg.mapbox ? (px[4 * i] * 65536 + px[4 * i + 1] * 256 + px[4 * i + 2]) * 0.1 - 10000
                                          : px[4 * i] * 256 + px[4 * i + 1] + px[4 * i + 2] / 256 - 32768)
       }
-      // Pass 1: the glacial ground (today's terrain plus the ice burying it).
+      // The model on every pixel; ground it rebuilt (a summit since lost) is added to today's.
       for (let row = 0; row < SIZE; row++) {
         const j = Math.min(row / STEP | 0, L - 2), v = row / STEP - j
         for (let col = 0; col < SIZE; col++) {
           const k = Math.min(col / STEP | 0, L - 2), u = col / STEP - k, i = row * SIZE + col
           const a = (j * L + k) * F, b = a + F, c = a + L * F, d = c + F
           for (let f = 0; f < F; f++) m[i * F + f] = (1 - v) * ((1 - u) * g[a + f] + u * g[b + f]) + v * ((1 - u) * g[c + f] + u * g[d + f])
-          const hm = m[i * F + 1]
+          elev[i] += m[i * F + 7]
+        }
+      }
+      // Pass 1: the glacial ground (that terrain plus the ice burying it).
+      for (let row = 0; row < SIZE; row++) {
+        for (let col = 0; col < SIZE; col++) {
+          const i = row * SIZE + col, hm = m[i * F + 1]
           let h = 0
           if (hm > 0.5) {
             // Thick ice fills up to the model's surface, flat across valleys the model can't resolve. Thin ice

@@ -19,7 +19,8 @@ from .regions import correction_path, setup
 HELD_OUT = {"idaho": {"Lemhi": (-113.60, -112.80, 44.00, 44.90), "Pioneer": (-114.25, -113.60, 43.50, 43.90)},
             "lost_river": {"Pioneer": (-114.25, -113.60, 43.50, 43.90)},
             "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)},
-            "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)}}
+            "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)},
+            "rainier": {"Goat Rocks": (-121.60, -121.30, 46.40, 46.60)}}
 SPACING = {"idaho": 1.0}  # degrees between control points; single ranges use 0.5, which also fits held-out ranges better
 RADIUS = 50e3      # per degree of spacing: control points compare model and mapped ice within about this distance (m)
 GAIN = 1.0         # K of correction per e-fold of area mismatch
@@ -47,7 +48,9 @@ def main():
         lon, lat, X, Y = (model.resample(v, bed0.shape) for v in (r["lon"], r["lat"], *np.meshgrid(r["x"], r["y"])))
         mapped = model.resample(r["mapped"] * 1.0, bed0.shape) > 0.5
         box = lambda b: (lon > b[0]) & (lon < b[1]) & (lat > b[2]) & (lat < b[3])
-        skip = np.zeros(bed0.shape, bool)  # cells left out of the fit: held-out ranges and edge inflow
+        # Cells left out of the fit: where the outlines say nothing, held-out ranges and edge inflow.
+        known = model.resample(r["known"] * 1.0, bed0.shape) > 0.5
+        skip = ~known
         for b in HELD_OUT[a.region].values():
             skip |= box(b)
         if edge is not None:  # ice near an inflow edge reflects the parent run, not this climate
@@ -77,7 +80,7 @@ def main():
             score = overlap(ice, ~skip)
             np.savez(correction_path(a.region), lons=lons, lats=lats, dT=dT)
 
-            held = "".join(f", held-out {name} {overlap(ice, box(b)):.0%}" for name, b in HELD_OUT[a.region].items())
+            held = "".join(f", held-out {name} {overlap(ice, box(b) & known):.0%}" for name, b in HELD_OUT[a.region].items())
             print(f"{dx:.0f} m grid, iteration {it + 1}: {time.time() - t0:.0f}s, fitted-area overlap {score:.0%}"
                   f"{held}, correction {dT.min():+.1f}..{dT.max():+.1f} K, changed by {np.abs(dT - old).max():.2f} K", flush=True)
             if np.abs(dT - old).max() < 0.1:

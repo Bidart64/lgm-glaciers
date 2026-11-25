@@ -17,11 +17,21 @@ REGIONS = {
     "lost_river":    (-113.65, 44.05, 45, 65, 0.2, 3000),
     "wind_river":    (-109.55, 42.95, 75, 95, 0.2, 3000),
     "sawtooth":      (-114.95, 44.10, 40, 50, 0.2, 3000),
+    "rainier":       (-121.80, 46.80, 60, 50, 0.2, 3000),
 }
 # Nested regions take ice flowing in across their northern edge from a coarser run (Cordilleran lobes
 # entering Idaho from British Columbia). Other edges stay ice-free: the coarse run over-glaciates the
 # lowlands there.
 PARENT = {"idaho": "north_america"}
+# Mountains as they stood at the LGM: (summit lon, lat, height m, slope of the cone put back on top). Rainier lost
+# its top to the Osceola collapse 5,600 years ago; before that it is thought to have reached about 4,900 m.
+REBUILT = {"rainier": (-121.7603, 46.8523, 4900.0, 0.7)}
+# Regions scored against the mountain-glacier outlines only: the ice-sheet outline covers the Cascades whole.
+NO_SHEETS = {"rainier"}
+# Elevation (m) above which the outlines say nothing: around Rainier they draw only the valley tongues, and leave
+# blank both the mountain itself, which still carries glaciers, and the slopes above the ice-age snowline.
+# Ground above it is left out of fits and scores.
+UNMAPPED_ABOVE = {"rainier": 1100.0}
 
 MAPPED = -4.0, 20.0   # K added inside and outside the mapped ice in mapped mode: ice fills the outlines (more
                       # cooling adds little) and none survives outside
@@ -55,10 +65,16 @@ def setup(region, use_correction=True, mapped=False):
     lon, lat = proj.inverse(*np.meshgrid(x, y))
     bed0 = dem.load_bed(proj, x, y, dx)
     T, P, z_ref = dem.load_climate(proj, x, y, bed0 if dx < 2000 else None)  # PRISM for fine grids
+    known = bed0 < UNMAPPED_ABOVE.get(region, np.inf)  # where the outlines can be compared with
+    rebuilt = np.zeros_like(bed0)  # height put back on top of today's ground (m)
+    if region in REBUILT:
+        lon_s, lat_s, top, slope = REBUILT[region]
+        rebuilt = np.maximum(top - slope * np.hypot(*np.subtract(np.meshgrid(x, y), np.reshape(proj.forward(lon_s, lat_s), (2, 1, 1)))) - bed0, 0)
+        bed0 = bed0 + rebuilt
     lgm_dT, ratio = pmip.sample(lon, lat)
     fitted = correction(region, lon, lat) if use_correction else 0.0
     natural = climate = T + lgm_dT + fitted, P * ratio, z_ref  # present climate + LGM anomalies
-    evidence = outlines.rasterize(proj, x, y)  # mapped LGM ice on this grid
+    evidence = outlines.rasterize(proj, x, y, region not in NO_SHEETS)  # mapped LGM ice on this grid
     if mapped:
         inside = np.minimum(distance_transform_edt(evidence) * dx / MARGIN, 1)
         climate = climate[0] + np.where(inside > 0, MAPPED[0] * inside, MAPPED[1]), *climate[1:]
@@ -68,6 +84,6 @@ def setup(region, use_correction=True, mapped=False):
         s, ice = export.read(WEB, PARENT[region], lon, lat)
         H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
         H_edge[:-1] = 0  # only the last row, the northern edge
-    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, climate=climate, natural=natural, mapped=evidence,
+    return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, rebuilt=rebuilt, climate=climate, natural=natural, mapped=evidence, known=known,
                 H_edge=H_edge,
                 years=years, corrected=bool(np.any(fitted)))

@@ -28,14 +28,15 @@ def flow_lines(vx, vy):
     return map_coordinates(noise, pos, order=1, mode="nearest")
 
 
-def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
+def write(web: Path, name, proj, x, y, dx, bed0, rebuilt, H, vx, vy, M, stats):
     """One PNG of three bands stacked north to south, each the size of the grid:
     1. R,G = (ice surface + 1000 m) × 8, 16-bit: steps of 1/8 m, fine enough not to show as terraces when
        the gentle ice surface is lit; B = glacier thickness (m, capped at 255; 0 under GLACIER)
     2. R = crevassing (largest tensile strain rate), G = direction of that stretching (0-255 for 0-180°,
        east = 0, anticlockwise; crevasses open across it), B = 128 + 25 × mass balance (m/yr): above 128 is
        snow-covered accumulation area, below is bare ice
-    3. R = flow-line value (see flow_lines)
+    3. R = flow-line value (see flow_lines), G = height of rebuilt ground above today's (m / 4; see
+       regions.REBUILT), which the browser adds to its terrain
 
     The surface is relative to today's ground (no isostatic depression), so the browser can compare it
     directly with present-day elevation tiles. Thick ice is drawn up to that surface, flat across a valley;
@@ -59,7 +60,7 @@ def write(web: Path, name, proj, x, y, dx, bed0, H, vx, vy, M, stats):
     zero = np.zeros_like(H)
     bands = [[surface >> 8, surface & 255, np.where(ice, np.minimum(H, 255), 0)],
              [ice * np.clip(stretch / CREVASSE_STRAIN, 0, 1) * 255, angle / np.pi * 255 % 256, np.clip(128 + 25 * M, 0, 255)],
-             [flow_lines(vx, vy) * 255, zero, zero]]
+             [flow_lines(vx, vy) * 255, np.minimum(rebuilt / 4, 255), zero]]
     px = np.vstack([np.round(np.stack(b, -1))[::-1] for b in bands]).astype(np.uint8)  # row 0 = north
     out = web / "data"
     out.mkdir(parents=True, exist_ok=True)

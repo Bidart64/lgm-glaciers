@@ -67,12 +67,13 @@ def load():
     return pickle.loads(path.read_bytes())
 
 
-def rasterize(proj, x, y):
-    """Mapped ice on a region grid (bool, same orientation as the model arrays)."""
+def rasterize(proj, x, y, sheets=True):
+    """Mapped ice on a region grid (bool, same orientation as the model arrays); `sheets=False` leaves out the
+    ice-sheet outline, which is drawn too coarsely to use in some mountains."""
     img = Image.new("1", (len(x), len(y)))
     draw = ImageDraw.Draw(img)
     dx = x[1] - x[0]
-    for ring in (r for rs in load().values() for r in rs):
+    for ring in (r for source, rs in load().items() if sheets or "Batchelor" not in source for r in rs):
         px, py = proj.forward(*ring.T)
         c, r = (px - x[0]) / dx, (py - y[0]) / dx
         if len(ring) < 3 or c.max() < 0 or r.max() < 0 or c.min() > len(x) or r.min() > len(y):

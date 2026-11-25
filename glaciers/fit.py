@@ -21,7 +21,6 @@ HELD_OUT = {"idaho": {"Lemhi": (-113.60, -112.80, 44.00, 44.90), "Pioneer": (-11
             "wind_river": {"East-side valleys": (-109.45, -108.95, 43.05, 43.50)},
             "sawtooth": {"White Clouds": (-114.75, -114.45, 44.00, 44.20)},
             "rainier": {"Goat Rocks": (-121.60, -121.30, 46.40, 46.60)},
-            "pyrenees": {"Eastern Pyrenees": (1.70, 2.60, 42.30, 42.80)},
             "alaska": {"Central Brooks Range": (-154.0, -148.0, 67.4, 68.8)}}
 SPACING = {"idaho": 1.0, "alaska": 1.0}  # degrees between control points; single ranges use 0.5, which also fits held-out ranges better
 RADIUS = 50e3      # per degree of spacing: control points compare model and mapped ice within about this distance (m)

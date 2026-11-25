@@ -15,7 +15,7 @@ from .dem import CACHE
 from .regions import REGIONS, WEB
 
 GEONAMES = "https://download.geonames.org/export/dump/{}.zip"  # one tab-separated table per country (CC BY 4.0)
-COUNTRIES = "US", "CA", "ES", "FR", "AD"
+COUNTRIES = "US", "CA"
 TOWNS = (50000, "city"), (2000, "town"), (50, "village")  # smallest population of each kind
 FONTS = "https://tiles.openfreemap.org/fonts/{}/{}.pbf"  # Noto Sans (SIL Open Font License)
 STACKS = "Noto Sans Regular", "Noto Sans Italic"

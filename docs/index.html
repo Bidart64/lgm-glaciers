@@ -135,8 +135,8 @@
 
   <script id="tiler" type="text/plain">
     // Runs in web workers, so the map stays smooth: builds each tile of the glacial world from today's
-    // terrain and the model's ice. Returns { dem: the glacial ground (Terrarium), ice: the overlay } as raw
-    // RGBA pixels: encoding them as PNG took far longer than computing them.
+    // terrain and the model's ice. Returns { dem: the glacial ground (Terrarium), ice: the overlay } as
+    // ready-made images, so the page's own thread has nothing left to do.
     let cfg, SIZE, regions = [], start
     const ready = new Promise(resolve => { start = resolve })
     onmessage = async ({ data: m }) => {
@@ -236,7 +236,7 @@
     const SCHRUND = 40    // m: ice thickness at a bergschrund
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
     async function tile(z, x, y) {
-      const px = await pixels(await download(cfg.dem.replace('{z}', z).replace('{x}', x).replace('{y}', y)))
+      const px = await pixels(await download(cfg.dem[(x + y) % cfg.dem.length].replace('{z}', z).replace('{x}', x).replace('{y}', y)))
       const n = 2 ** z
       const mpp = 40075016 * Math.cos(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)))) / (n * SIZE)  // metres per pixel
       // The model is smooth: sample it every STEP pixels (but at least once per model cell) and interpolate.
@@ -278,12 +278,16 @@
           }
           thick[i] = h
           const e = (ground[i] = elev[i] + h) + 32768
-          dem.set([e >> 8, e & 255, (e % 1) * 256 | 0, 255], 4 * i)  // Terrarium
+          dem[4 * i] = e >> 8; dem[4 * i + 1] = e & 255; dem[4 * i + 2] = (e % 1) * 256; dem[4 * i + 3] = 255  // Terrarium
         }
       }
       // Pass 2: paint the ice, lit by its own surface so its shape shows: snow above the snowline, bare blue
       // ice below, flow bands and moraines along the flow lines, crevasses where the ice stretches, bergschrunds, debris
-      // towards the snouts. Ice-free ground above the snowline carries perennial snow.
+      // towards the snouts. Ice-free ground above the snowline carries perennial snow; the rest gets hill
+      // shading (translucent shadow or highlight).
+      let R, G, B
+      const tint = (to, t) => { R += (to[0] - R) * t; G += (to[1] - G) * t; B += (to[2] - B) * t }
+      const sunlit = (gx, gy, Z) => Math.max(0, (0.54 * gx * Z - 0.54 * gy * Z + 0.64) / Math.sqrt((gx * gx + gy * gy) * Z * Z + 1)) / 0.64
       const showFine = clamp((25 - mpp) / 15)  // crevasses only where they can be resolved
       const unit = 40075016 * 0.72 / (n * SIZE)
       for (let row = 0; row < SIZE; row++) {
@@ -294,12 +298,16 @@
           // continue across tiles and zoom levels.
           const X = (x * SIZE + col) * unit, Y = -(y * SIZE + row) * unit
           const rough = noise(X / 70, Y / 70)
-          if (h <= 0 && clamp(mb / 0.3) * clamp((1.0 - Math.hypot(gx, gy)) / 0.3) < 0.35 + 0.3 * rough) continue
+          if (h <= 0 && clamp(mb / 0.3) * clamp((1.0 - Math.hypot(gx, gy)) / 0.3) < 0.35 + 0.3 * rough) {
+            const lit = sunlit(gx, gy, 1), p = 4 * i
+            if (lit < 1) { ice[p] = 42; ice[p + 1] = 51; ice[p + 2] = 64; ice[p + 3] = (1 - lit) * 140 } else { ice[p] = ice[p + 1] = ice[p + 2] = 255; ice[p + 3] = Math.min(1, lit - 1) * 60 }
+            continue
+          }
           // The snowline wobbles; bare ice gets greyer with debris towards the snout.
           const snow = h > 0 ? clamp((mb + 0.5 * (noise(X / 400, Y / 400) - 0.5)) / 0.5 + 0.5) : 1
           const bare = 1 - snow
-          let c = SNOW.map((s, q) => s + (ICE[q] - s) * bare)
-          const tint = (to, t) => { c = c.map((s, q) => s + (to[q] - s) * t) }
+          R = SNOW[0]; G = SNOW[1]; B = SNOW[2]
+          tint(ICE, bare)
           // Flow bands: some flow lines carry rock from the valley walls (medial moraines).
           const band = m[o + 4] * 18, id = Math.floor(band), dist = Math.abs(band - id - 0.5)
           const load = hash(id, 7)
@@ -334,12 +342,12 @@
                      * clamp(3 * noise(X / 90, Y / 90) - 0.3))
           // Sun from the north-west, 40° up; the gentle relief of ice is exaggerated so it reads. Shadows on
           // snow and ice are blue: they are lit by the sky.
-          const Z = 2.5, lit = Math.max(0, (0.54 * gx * Z - 0.54 * gy * Z + 0.64) / Math.sqrt((gx * gx + gy * gy) * Z * Z + 1)) / 0.64
-          const light = 0.5 + 0.5 * Math.min(1.5, lit) + 0.03 * (rough - 0.5)
-          ice.set([c[0] * light, c[1] * (0.25 + 0.75 * light), c[2] * (0.45 + 0.55 * light), 255], 4 * i)
+          const light = 0.5 + 0.5 * Math.min(1.5, sunlit(gx, gy, 2.5)) + 0.03 * (rough - 0.5), p = 4 * i
+          ice[p] = R * light; ice[p + 1] = G * (0.25 + 0.75 * light); ice[p + 2] = B * (0.45 + 0.55 * light); ice[p + 3] = 255
         }
       }
-      return { dem: dem.buffer, ice: ice.buffer }
+      const image = (rgba, premultiplyAlpha) => createImageBitmap(new ImageData(rgba, SIZE, SIZE), { colorSpaceConversion: 'none', premultiplyAlpha })
+      return { dem: await image(dem, 'none'), ice: await image(ice, 'premultiply') }
     }
   </script>
 
@@ -360,7 +368,9 @@
       fonts: { town: ['DIN Pro Regular'], peak: ['DIN Pro Italic', 'Arial Unicode MS Regular'] },  // second font has ▲
     } : {
       size: 256, demMaxzoom: 15,
-      today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] },
+      // two names for the same server: browsers open only six connections to each
+      today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+                                              'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'] },
       imagery: { tileSize: 256, maxzoom: 16, tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
       credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS',
       glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
@@ -378,7 +388,8 @@
     const names = window.LGM_REGIONS && [...window.LGM_REGIONS, ...(window.LGM_BACKGROUND || [])]
 
     // Tiles are built by a few workers (the "tiler" script above), which are handed the region data once it
-    // has been downloaded (once, here). Recent tiles are kept: the ground of each is asked for twice.
+    // has been downloaded (once, here). Each tile yields two images, its ground and its overlay, which the
+    // map asks for separately and takes once each.
     const source = URL.createObjectURL(new Blob([$('tiler').textContent], { type: 'text/javascript' }))
     const jobs = new Map(), tiles = new Map()
     const workers = Array.from({ length: Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4) - 2)) }, () => {
@@ -387,24 +398,27 @@
       w.onmessage = ({ data }) => { w.busy--; jobs.get(data.id)(data); jobs.delete(data.id) }
       return w
     })
-    function glacialTile(key) {
+    function glacialTile(key, kind) {
+      if (tiles.get(key)?.taken.has(kind)) tiles.delete(key)  // asked for again: build it again
       if (!tiles.has(key)) {
-        if (tiles.size > 60) tiles.delete(tiles.keys().next().value)
-        tiles.set(key, new Promise((resolve, reject) => {
+        if (tiles.size > 200) tiles.delete(tiles.keys().next().value)  // overlays whose ground was never wanted (2D)
+        tiles.set(key, { taken: new Set(), built: new Promise((resolve, reject) => {
           const w = workers.reduce((a, b) => a.busy <= b.busy ? a : b), id = Math.random()
           jobs.set(id, d => d.error ? (tiles.delete(key), reject(new Error(d.error))) : resolve(d))
           w.busy++
           w.postMessage({ id, key })
-        }))
+        }) })
       }
-      return tiles.get(key)
+      const tile = tiles.get(key)
+      if (tile.taken.add(kind).size === 2) tiles.delete(key)
+      return tile.built.then(d => d[kind])
     }
-    // lgm://dem/z/x/y -> glacial ground (Terrarium); lgm://ice/z/x/y -> ice and snow overlay.
+    // lgm://dem/z/x/y -> glacial ground (Terrarium); lgm://ice/z/x/y -> ice, snow and hill-shading overlay.
     maplibregl.addProtocol('lgm', async ({ url }) => {
       const [, kind, key] = url.match(/lgm:\/\/(\w+)\/(.+)/)
-      const rgba = new ImageData(new Uint8ClampedArray((await glacialTile(key))[kind]), SIZE, SIZE)
+      const data = await glacialTile(key, kind)
       $('loading').classList.add('done')  // the first tile is in: show the map while the rest arrive
-      return { data: await createImageBitmap(rgba, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }) }
+      return { data }
     })
 
     const name = key => ['coalesce', ['get', key], ['get', 'name']]
@@ -422,14 +436,13 @@
           satellite: { type: 'raster', ...P.imagery,
                        attribution: `${P.credit} · Ice model: Mapzen terrain, ETOPO 2022, PRISM, WorldClim, PMIP4` },
           ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: SIZE, maxzoom: P.demMaxzoom },
-          terrain: dem, shade: dem,
+          terrain: dem,
           today: { type: 'raster-dem', tileSize: SIZE, maxzoom: P.demMaxzoom, ...P.today },
           names: P.names,
         },
         layers: [
           { id: 'satellite', type: 'raster', source: 'satellite' },
           { id: 'ice', type: 'raster', source: 'ice', paint: { 'raster-resampling': 'linear' } },
-          { id: 'shade', type: 'hillshade', source: 'shade', paint: shade },
           { id: 'shade-today', type: 'hillshade', source: 'today', layout: { visibility: 'none' }, paint: shade },
           { id: 'towns', type: 'symbol', source: 'names', 'source-layer': P.towns.layer,
             filter: ['all', P.towns.extra,
@@ -483,7 +496,7 @@
     index.then(async all => {
       const list = await Promise.all(all.filter(r => !names || names.includes(r.name)).map(async meta =>
         ({ meta, blob: await (await fetch(`${DATA}/${meta.name}.png`)).blob() })))
-      const cfg = { dem: P.today.tiles[0], mapbox: !!TOKEN, size: SIZE }
+      const cfg = { dem: P.today.tiles, mapbox: !!TOKEN, size: SIZE }
       workers.forEach(w => w.postMessage({ cfg, regions: list }))
     })
     index.then(all => {
@@ -528,7 +541,7 @@
     }
     $('glaciers').onclick = e => {
       glaciersOn = e.currentTarget.classList.toggle('on')
-      visible(['ice', 'shade'], glaciersOn)
+      visible(['ice'], glaciersOn)
       visible(['shade-today'], !glaciersOn)
       if (map.getTerrain()) map.setTerrain(terrain())
     }

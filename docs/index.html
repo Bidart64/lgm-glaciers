@@ -451,7 +451,7 @@
     const name = key => ['coalesce', ['get', key], ['get', 'name']]
     // 3D ground: the glacial world (today's terrain raised to the ice surface), or today's terrain alone.
     let glaciersOn = true
-    const EXAGGERATION = 1.4
+    const EXAGGERATION = 1  // true scale: stretched heights make peaks look like spikes
     const terrain = () => ({ source: glaciersOn ? 'terrain' : 'today', exaggeration: EXAGGERATION })
     const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: SIZE, encoding: 'terrarium', maxzoom: P.demMaxzoom }
     const shade = { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' }

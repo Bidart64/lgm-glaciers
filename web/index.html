@@ -385,7 +385,11 @@
     // AWS Terrain Tiles, bundled GeoNames names), so the page also works with no account, e.g. on GitHub Pages.
     const TOKEN = window.MAPBOX_TOKEN
     const DATA = new URL(window.LGM_DATA || 'data', location.href).href
+    // On a high-density screen (two or more pixels per point) the free tiles are shown at half size, which makes
+    // the map load one level deeper: sharp at any distance, for four times the tiles.
+    const DENSE = devicePixelRatio > 1.5 ? 2 : 1
     const P = TOKEN ? {
+      shown: 512,
       size: 512, demMaxzoom: 14,
       today: { encoding: 'mapbox', tiles: [`https://api.mapbox.com/v4/mapbox.mapbox-terrain-dem-v1/{z}/{x}/{y}@2x.pngraw?access_token=${TOKEN}`] },
       imagery: { tileSize: 256, maxzoom: 19, tiles: [`https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${TOKEN}`] },
@@ -396,13 +400,13 @@
       peaks: { layer: 'natural_label', filter: ['in', ['get', 'maki'], ['literal', ['mountain', 'volcano']]], ele: 'elevation_m', name: 'name_en' },
       fonts: { town: ['DIN Pro Regular'], peak: ['DIN Pro Italic', 'Arial Unicode MS Regular'] },  // second font has ▲
     } : {
-      size: 256, demMaxzoom: 15,
+      size: 256, shown: 256 / DENSE, demMaxzoom: 15,
       // two names for the same server: browsers open only six connections to each
       today: { encoding: 'terrarium', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
                                               'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'] },
-      imagery: { tileSize: 256, maxzoom: 16, bounds: [-170, 17, -64, 72],  // sharp, but United States only
+      imagery: { tileSize: 256 / DENSE, maxzoom: 16, bounds: [-170, 17, -64, 72],  // sharp, but United States only
                  tiles: ['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'] },
-      world: { tileSize: 256, maxzoom: 14, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg'],  // everywhere else
+      world: { tileSize: 256 / DENSE, maxzoom: 14, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg'],  // everywhere else
                attribution: 'Sentinel-2 cloudless by EOX (contains modified Copernicus Sentinel data 2016)' },
       credit: 'Imagery: USGS National Map · Terrain: Mapzen/AWS · Names: GeoNames',
       // Names and fonts come with the site (python -m glaciers.names): a map service's may be stopped by content blockers.
@@ -459,7 +463,7 @@
     let glaciersOn = true
     const EXAGGERATION = 1  // true scale: stretched heights make peaks look like spikes
     const terrain = () => ({ source: glaciersOn ? 'terrain' : 'today', exaggeration: EXAGGERATION })
-    const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: SIZE, encoding: 'terrarium', maxzoom: P.demMaxzoom }
+    const dem = { type: 'raster-dem', tiles: ['lgm://dem/{z}/{x}/{y}'], tileSize: P.shown, encoding: 'terrarium', maxzoom: P.demMaxzoom }
     const shade = { 'hillshade-exaggeration': 0.3, 'hillshade-shadow-color': '#2a3340', 'hillshade-highlight-color': '#ffffff' }
     const map = new maplibregl.Map({
       container: 'map', center: [-113.65, 44.05], zoom: 9, pitch: 60, bearing: 30, maxPitch: 80, hash: true,  // URL keeps the view
@@ -472,9 +476,9 @@
           satellite: { type: 'raster', ...P.imagery,
                        attribution: `${P.credit} · Ice model: Mapzen terrain, ETOPO 2022, PRISM, WorldClim, PMIP4` },
           ...(P.world && { world: { type: 'raster', ...P.world } }),
-          ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: SIZE, maxzoom: P.demMaxzoom },
+          ice: { type: 'raster', tiles: ['lgm://ice/{z}/{x}/{y}'], tileSize: P.shown, maxzoom: P.demMaxzoom },
           terrain: dem,
-          today: { type: 'raster-dem', tileSize: SIZE, maxzoom: P.demMaxzoom, ...P.today },
+          today: { type: 'raster-dem', tileSize: P.shown, maxzoom: P.demMaxzoom, ...P.today },
           names: P.names,
         },
         layers: [

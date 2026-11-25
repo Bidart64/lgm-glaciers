@@ -155,15 +155,40 @@
     // Runs in web workers, so the map stays smooth: builds each tile of the glacial world from today's
     // terrain and the model's ice. Returns { dem: the glacial ground (Terrarium), ice: the overlay } as
     // ready-made images, so the page's own thread has nothing left to do.
-    let cfg, SIZE, regions = [], start
+    let cfg, SIZE, regions = [], start, kept
     const ready = new Promise(resolve => { start = resolve })
+    const image = (pixels, premultiplyAlpha) => createImageBitmap(pixels, { colorSpaceConversion: 'none', premultiplyAlpha })
+    const KINDS = [['dem', 'none'], ['ice', 'premultiply']]
     onmessage = async ({ data: m }) => {
-      if (m.cfg) { cfg = m.cfg; SIZE = cfg.size; return load(m.regions).then(start) }
+      if (m.cfg) { cfg = m.cfg; SIZE = cfg.size; return Promise.all([load(m.regions), keep()]).then(start) }
       try {
         await ready
-        const t = await tile(...m.key.split('/').map(Number))
-        postMessage({ id: m.id, ...t }, [t.dem, t.ice])
+        const saved = kept && await Promise.all(KINDS.map(([kind]) => kept.match(`https://tiles/${kind}/${m.key}`)))
+        if (saved?.every(Boolean)) {  // built on an earlier visit
+          const [dem, ice] = await Promise.all(saved.map(async (res, k) => image(await res.blob(), KINDS[k][1])))
+          return postMessage({ id: m.id, dem, ice }, [dem, ice])
+        }
+        const rgba = await tile(...m.key.split('/').map(Number))
+        const [dem, ice] = await Promise.all(rgba.map((px, k) => image(new ImageData(px, SIZE, SIZE), KINDS[k][1])))
+        postMessage({ id: m.id, dem, ice }, [dem, ice])
+        for (const [k, [kind]] of KINDS.entries()) {  // then keep it for next time, as a PNG
+          const canvas = new OffscreenCanvas(SIZE, SIZE)
+          canvas.getContext('2d').putImageData(new ImageData(rgba[k], SIZE, SIZE), 0, 0)
+          kept?.put(`https://tiles/${kind}/${m.key}`, new Response(await canvas.convertToBlob({ type: 'image/png' }))).catch(() => {})
+        }
       } catch (e) { postMessage({ id: m.id, error: String(e) }) }
+    }
+
+    // Built tiles are kept in the browser's cache storage between visits, under a name that changes whenever the
+    // site's data or code does (older ones are dropped). Without that storage (private windows) nothing is kept.
+    async function keep() {
+      try {
+        const name = `lgm-tiles-${cfg.version}`
+        for (const old of await caches.keys()) if (old.startsWith('lgm-tiles-') && old !== name) caches.delete(old)
+        kept = await caches.open(name)
+        const keys = await kept.keys()
+        for (const old of keys.slice(0, Math.max(0, keys.length - 4000))) kept.delete(old)  // oldest first
+      } catch { kept = null }
     }
 
     async function pixels(blob) {
@@ -375,8 +400,7 @@
           ice[p] = R * light; ice[p + 1] = G * (0.25 + 0.75 * light); ice[p + 2] = B * (0.45 + 0.55 * light); ice[p + 3] = 255
         }
       }
-      const image = (rgba, premultiplyAlpha) => createImageBitmap(new ImageData(rgba, SIZE, SIZE), { colorSpaceConversion: 'none', premultiplyAlpha })
-      return { dem: await image(dem, 'none'), ice: await image(ice, 'premultiply') }
+      return [dem, ice]
     }
   </script>
 
@@ -541,7 +565,9 @@
     index.then(async all => {
       const list = await Promise.all(all.filter(r => !names || names.includes(r.name)).map(async meta =>
         ({ meta, blob: await (await fetch(`${DATA}/${meta.name}.png`)).blob() })))
-      const cfg = { dem: P.today.tiles, mapbox: !!TOKEN, size: SIZE }
+      // What the kept tiles depend on: this page, the data (both stamped when the site is deployed) and the terrain source.
+      const version = [document.lastModified, JSON.stringify(all), SIZE, !!TOKEN].join().split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)
+      const cfg = { dem: P.today.tiles, mapbox: !!TOKEN, size: SIZE, version }
       workers.forEach(w => w.postMessage({ cfg, regions: list }))
     })
     index.then(all => {

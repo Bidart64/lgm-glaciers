@@ -62,7 +62,8 @@ and cache them in `data/` (PRISM alone is 2 GB).
    surface, and thickness waves travelling with the ice) are implicit. The time step is the grid spacing
    ÷ 80 m/yr, below which results stop changing (2.5 years on a 200 m grid). Ice first settles on grids
    4× and 2× coarser, then adjusts on the full grid, which gives the same ice (within 3%) about 4× sooner. The bed
-   sinks under the ice load.
+   sinks under the ice load. A run uses up to 4 cores (`LGM_THREADS` to change): separate ice masses are solved
+   side by side, which takes about a third off a patch with many glaciers and about a tenth off one ice cap.
 5. **Climate correction** (`glaciers/fit.py`): the climate models' LGM cooling has the wrong regional shape
    over the Rockies: about −6.5 °C in central Idaho, where glacier modelling implies −8.5 to −10 °C, and
    too cold near the ice sheets. So a smooth temperature correction on a 0.5-1° grid is fitted to the mapped
@@ -92,18 +93,18 @@ and cache them in `data/` (PRISM alone is 2 GB).
 |---|---|---|---|---|---|
 | North America (no correction) | 20 km | 16.7M km² | 18.6M km² | 84% | – |
 | Alaska | 1.5 km | 642,000 km² | 657,000 km² | 64% | Central Brooks Range 15% |
-| Western US, 95 patches together | 200 m | 144,800 km² | 138,200 km² | 52% (weighted by mapped ice) | – |
+| Western US, 95 patches together | 200 m | 161,800 km² | 155,100 km² | 54% (weighted by mapped ice) | – |
 | Yellowstone and Wind River | 200 m | 43,700 km² | 39,400 km² | 69% | 71% |
 | Sierra Nevada | 200 m | 14,400 km² | 15,300 km² | 66% | 71% |
 | Sawtooth Range | 200 m | 9,700 km² | 10,300 km² | 60% | 57% |
 | Uinta Mountains | 200 m | 3,600 km² | 3,200 km² | 59% | 63% |
 | San Juan Mountains | 200 m | 9,800 km² | 9,500 km² | 57% | 48% |
 | Central Colorado | 200 m | 8,100 km² | 8,200 km² | 52% | 50% |
+| Bitterroot Range (with ice-sheet inflow) | 200 m | 30,000 km² | 28,800 km² | 52% | 54% |
 | Oregon Cascades | 200 m | 6,900 km² | 7,900 km² | 45% | 39% |
 | Lost River Range | 200 m | 3,200 km² | 3,600 km² | 45% | 29% |
 | Olympic Mountains | 200 m | 2,000 km² | 1,200 km² (valley tongues only) | 33% below 1,100 m | 45% |
 | Mount Rainier | 200 m | 4,800 km² | 2,200 km² (valley tongues only) | 29% below 1,100 m | 22% |
-| Bitterroot Range | 200 m | 17,800 km² | 14,400 km² | 23% | 21% |
 | Central Cascades | 200 m | 3,300 km² | 1,900 km² (valley tongues only) | 21% below 1,100 m | 34% |
 
 Overlap is intersection ÷ union of computed and mapped ice; the held-out part is one in five quarter-degree
@@ -115,15 +116,22 @@ squares, left out of the fit. Every patch's numbers are in `web/data/<patch>.jso
   - In Washington's Cascades and Olympics the outlines draw only the valley tongues, not the high ground
     they flowed from, so fits and scores there use ground below 1,100 m only. The model also puts ice on
     the ridges between the tongues.
-  - The ice-sheet outline counts as evidence only south of 46.5°N and east of 120°W, where it shows the
-    mountain ice of central Idaho and Yellowstone. Further west it covers the Cascades whole.
+  - The ice-sheet outline counts as evidence south of 46.5°N and east of 120°W, where it shows the
+    mountain ice of central Idaho and Yellowstone, and in the patches the ice sheet flows into (below).
+    Further west it covers the Cascades whole.
   - Many small ranges are drawn as rough blobs marking that ice existed, not as glacier outlines. The
-    model's glaciers can sit on the high ground beside a blob and score 0%. For the 68 patches with under
-    500 km² of mapped ice (8,000 km² in all, against 5,900 km² computed), compare areas, not overlap.
-- **No ice sheet in the patches.** North of about 46.5°N the Cordilleran ice sheet flowed in from Canada;
-  the patches have no inflow, so the Bitterroot patch and those near the border show local glaciers only
-  (hence its 23%), and nothing is patched north of 48.3°N, where the mountain-glacier outlines stop. The
-  coarse North America run shows the ice sheet there.
+    model's glaciers can sit on the high ground beside a blob and score 0%. For the 66 patches with under
+    500 km² of mapped ice (7,700 km² in all, against 5,600 km² computed), compare areas, not overlap.
+- **The ice sheet in the patches.** North of about 46.5°N the Cordilleran ice sheet flowed in from Canada.
+  Where the mapped ice sheet crosses a patch's northern edge (five patches in northern Idaho and western
+  Montana), the patch takes ice in across that edge at the coarse North America run's thickness, scaled by a
+  factor fitted with the climate so that the lobe covers as much ground as the mapped one. This took the
+  Bitterroot patch from 23% to 52%. Two small patches did not fit well: the Garnet Range grows far too much
+  ice even with the least inflow allowed, and North Hills reaches the most inflow allowed (overlap 36% and
+  26%). Nothing is patched north of 48.3°N, where the mountain-glacier outlines stop; the coarse run shows
+  the ice sheet there. The ice sheet published as Seguinot et al. 2016's Cordilleran simulations was
+  checked as an alternative source of inflow, but in Idaho it barely crosses the border and its domain
+  stops short of Montana.
 - **Patch edges.** Each box reaches 10 km past its mapped ice. Where the computed ice grows further, it is
   cut off along the edge of the box in a straight line (north of Mount Rainier, for instance).
 - About a dozen small, dry ranges (mostly in the Great Basin) reach the fit's limit of 4 °C of extra
@@ -180,6 +188,8 @@ Everything used to recreate the LGM ice, and what each is used for.
   USGS estimate; the cone put back here is a plain cone of about that height, not a geological reconstruction.
 
 **Checks against field studies** (not model inputs)
+- Cordilleran ice sheet simulations (checked as a source of inflow, not used): Seguinot et al. 2016, *The Cryosphere* 10,
+  639-664. Data: https://doi.org/10.5281/zenodo.7802345
 - Wind River ice cap: Birkel et al. 2012, "Climate inferences from a glaciological reconstruction of the late
   Pleistocene Wind River Ice Cap", *Arctic, Antarctic, and Alpine Research* 44, 265-276.
 - Sawtooth Valley glaciation: Thackray et al. 2004, *Geology* 32, 225-228; USGS Open-File Report 2004-1222.

@@ -56,6 +56,12 @@ def correction(region, lon, lat):
     return map_coordinates(c["dT"], rc, order=1, mode="nearest")
 
 
+def inflow_scale(region):
+    """The fitted share of the coarse run's edge thickness that flows into a patch (1 without a fit)."""
+    c = np.load(correction_path(region)) if correction_path(region).exists() else {}
+    return float(c["inflow"]) if "inflow" in c else 1.0
+
+
 def setup(region, use_correction=True, mapped=False):
     """Everything a run needs, as a dict:
 
@@ -96,21 +102,31 @@ def setup(region, use_correction=True, mapped=False):
     fitted = correction(region, lon, lat) if use_correction else 0.0
     natural = climate = T + lgm_dT + fitted, P * ratio, z_ref
 
-    # The field evidence on this grid and, in mapped mode, the climate bent to it: colder inside the mapped ice
-    # (building up over MARGIN from its outline), far too warm for ice outside.
-    # (For the patches, the mountain-glacier outlines only: the ice-sheet outline covers the Cascades whole.)
-    evidence = outlines.rasterize(proj, x, y)
-    if region in PATCH_NAMES:  # the western patches use the ice-sheet outline only where it shows mountain ice
-        evidence = outlines.rasterize(proj, x, y, sheets=False) | evidence & (lon > SHEETS[0]) & (lat < SHEETS[1])
+    # The field evidence on this grid. For the western patches the ice-sheet outline counts only where it shows
+    # mountain ice (see SHEETS), unless the ice sheet itself flows into the patch (below).
+    mountain, everything = outlines.rasterize(proj, x, y, sheets=False), outlines.rasterize(proj, x, y)
+    evidence = mountain | everything & (lon > SHEETS[0]) & (lat < SHEETS[1]) if region in PATCH_NAMES else everything
+
+    # Ice entering from the coarse run: its thickness along this region's edges (only the outermost cells are
+    # used). Alaska takes it on every side. A western patch takes it only where the mapped ice sheet crosses its
+    # northern edge, north of SHEETS: elsewhere the coarse run over-glaciates lowlands and mountains alike.
+    H_edge = None
+    if region in PARENT or lat[-1].max() > SHEETS[1] and lon.min() > SHEETS[0]:
+        s, ice = export.read(WEB, "north_america", lon, lat)
+        H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
+        if region not in PARENT:
+            H_edge[:-1] = 0
+            H_edge[-1] *= everything[-1] & ~mountain[-1]
+            H_edge, evidence = (H_edge, everything) if H_edge.any() else (None, evidence)
+            if use_correction and H_edge is not None:
+                H_edge *= inflow_scale(region)
+
+    # In mapped mode, the climate bent to the evidence: colder inside the mapped ice (building up over MARGIN
+    # from its outline), far too warm for ice outside.
     if mapped:
         inside = np.minimum(distance_transform_edt(evidence) * dx / MARGIN, 1)
         climate = climate[0] + np.where(inside > 0, MAPPED[0] * inside, MAPPED[1]), *climate[1:]
 
-    # Ice entering from a coarser run: its thickness along this region's edges (only the outermost cells are used).
-    H_edge = None
-    if region in PARENT:
-        s, ice = export.read(WEB, PARENT[region], lon, lat)
-        H_edge = np.where(ice, np.maximum(s - bed0, 0), 0)
     return dict(proj=proj, x=x, y=y, dx=dx, lon=lon, lat=lat, bed0=bed0, rebuilt=rebuilt, climate=climate,
                 natural=natural, mapped=evidence, known=known, H_edge=H_edge, years=years,
                 corrected=bool(np.any(fitted)))

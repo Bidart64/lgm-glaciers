@@ -8,11 +8,14 @@ Arrays are (rows, columns) with row 0 in the south and column 0 in the west. Len
 years, temperatures °C, precipitation mm per month.
 """
 
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy import sparse
 from scipy.ndimage import gaussian_filter, map_coordinates, uniform_filter
+from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import spsolve
 from scipy.special import erfc
 
@@ -33,10 +36,23 @@ SLIDE = 1e-4       # basal sliding: velocity per basal shear stress (m / yr / Pa
 SOFT_BED = 150.0   # sliding enhancement on smooth lowland (sediment) beds
 STEP_SPEED = 80.0  # time step = grid spacing / this (m/yr): results stop changing below it
 MAX_STEP = 25.0    # yr
+THREADS = int(os.environ.get("LGM_THREADS", min(os.cpu_count(), 4)))  # cores one run may use (more gained nothing on an M1)
+POOL = ThreadPoolExecutor(THREADS)
 ADJUST = 1 / 6     # share of a run's years spent adjusting on the full grid (twice that on the 2x coarser one)
 
 
 def mass_balance(s, T_ref, P, z_ref):
+    """mass_balance_block over blocks of rows, on several cores at once."""
+    n = s.shape[0]
+    if THREADS == 1 or s.size < 20000:
+        return mass_balance_block(s, T_ref, P, z_ref)
+    cuts = np.linspace(0, n, THREADS * 2 + 1).astype(int)
+    parts = POOL.map(lambda k: mass_balance_block(s[cuts[k]:cuts[k + 1]], T_ref[:, cuts[k]:cuts[k + 1]], P[:, cuts[k]:cuts[k + 1]],
+                                                  z_ref[cuts[k]:cuts[k + 1]]), range(len(cuts) - 1))
+    return np.concatenate(list(parts))
+
+
+def mass_balance_block(s, T_ref, P, z_ref):
     """Annual surface mass balance (m ice / yr) from monthly climate, lapse-corrected to surface s."""
     T = T_ref + LAPSE * (z_ref - s)  # monthly temperature at the surface: colder the higher it is
     # Snowfall: all of the precipitation below -2 °C, none above 2 °C, a mix in between (m water / yr).
@@ -125,7 +141,7 @@ def simulate(bed0, climate, dx, years, H_edge=None, H0=None):
         if active.size:
             mat = sparse.diags([diag.ravel(), east.ravel()[:-1], west.ravel()[1:], north.ravel()[:-nx], south.ravel()[nx:]],
                                [0, 1, -1, nx, -nx], format="csr")
-            dH[active] = spsolve(mat[active][:, active].tocsc(), dH[active])
+            dH[active] = solve(mat[active][:, active], dH[active])
         H = np.maximum(H + dH.reshape(ny, nx) + dt * (M - melt), 0.0)
         H[bed < SEA_LEVEL - MAX_WATER] = 0.0  # ice calves away over deep water
         H[edge] = 0.0 if H_edge is None else H_edge[edge]
@@ -133,6 +149,22 @@ def simulate(bed0, climate, dx, years, H_edge=None, H0=None):
     if sys.stderr.isatty():
         sys.stderr.write("\r" + " " * 50 + "\r")  # clear the bar
     return H, bed
+
+
+def solve(mat, b):
+    """Solve mat x = b. Separate ice masses are separate blocks of the system, solved on several cores at once."""
+    n, label = connected_components(mat, directed=False)
+    if THREADS == 1 or n == 1:
+        return spsolve(mat.tocsc(), b)
+    order = np.argsort(label, kind="stable")
+    bounds = np.searchsorted(label[order], np.arange(n + 1))
+    x = np.empty_like(b)
+
+    def one(k):
+        idx = order[bounds[k]:bounds[k + 1]]
+        x[idx] = spsolve(mat[idx][:, idx].tocsc(), b[idx]) if len(idx) > 1 else b[idx] / mat[idx[0], idx[0]]
+    list(POOL.map(one, sorted(range(n), key=lambda k: bounds[k] - bounds[k + 1])))  # largest first
+    return x
 
 
 def resample(a, shape):

@@ -274,8 +274,10 @@
         const m = [(cubic(r.s, r.nx, r.ny, i, j, u, v) ?? mix(r.s)) / 8 - 1000, mix(r.h), mix(r.crev) / 255, (mix(r.mb) - 128) / 25, mix(r.phi) / 255]
         // Finer regions win, blended in over 10 cells from their edge so there is no seam.
         const t = found ? Math.min(1, Math.min(fx, fy, r.nx - 1 - fx, r.ny - 1 - fy) / 10) : 1
-        const a2 = r.ang[k + (u > 0.5) + (v > 0.5) * r.nx] / 255 * 2 * Math.PI
-        m.push(Math.cos(a2), Math.sin(a2), mix(r.up) * 4)
+        // The stretching direction, as the cosine and sine of twice its angle, blended between the four cells
+        // (not normalised: only their ratio is used).
+        const turn = f => { let t = 0; for (const [d, w] of [[0, (1 - u) * (1 - v)], [1, u * (1 - v)], [r.nx, (1 - u) * v], [r.nx + 1, u * v]]) t += w * f(r.ang[k + d] / 255 * 2 * Math.PI); return t }
+        m.push(turn(Math.cos), turn(Math.sin), mix(r.up) * 4)
         for (let f = 0; f < F; f++) g[o + f] += t * (m[f] - g[o + f])
         found = true
       }
@@ -291,9 +293,10 @@
 
     const MIN_ICE = 8     // m: thinner ice is not drawn
     const VENEER = 30     // m: ice up to this thin follows the fine terrain instead of a flat surface
-    const CELL = 50       // m: spacing of crevasses
+    const PACK = 170      // m: crevasses come in packs of parallel cracks; one pack may sit in each square this size
     const SCHRUND = 40    // m: ice thickness at a bergschrund
     const SNOW = [247, 250, 254], ICE = [166, 200, 220], DEEP = [38, 92, 150], DEBRIS = [122, 114, 104]
+    const CRACK = [40, 58, 84], BROKEN = [158, 176, 196], DUST = [170, 160, 146], WHITE = [255, 255, 255]
     async function tile(z, x, y) {
       // Today's terrain for this tile, as encoded elevation pixels.
       const px = await pixels(await download(cfg.dem[(x + y) % cfg.dem.length].replace('{z}', z).replace('{x}', x).replace('{y}', y)))
@@ -386,31 +389,63 @@
           tint(DEBRIS, deep * bare * (load > 0.5 ? 0.5 * clamp(1 - dist / (0.05 + 0.25 * (load - 0.5))) : 0))
           tint(DEEP, deep * 0.08 * (0.5 + 0.5 * Math.sin(band * 6.283)) * (0.4 + 0.6 * bare))
           tint(DEBRIS, bare * clamp((-mb - 1.5) / 5 + (1 - clamp(hm / 60)) * 0.5) * (0.5 + 0.5 * rough))
-          // Crevasses: separate cracks, each a lens 40-100 m long that tapers to its ends, lying across the
-          // direction of stretching. One may sit in each CELL-sized square of ground; more where the ice
-          // stretches faster.
-          const cv = clamp((m[o + 2] - 0.25) / 0.5) * showFine * (1 - snow * 0.4)
-          if (cv > 0) {
-            const a = Math.atan2(m[o + 6], m[o + 5]) / 2, ca = Math.cos(a), sa = Math.sin(a)
-            let depth = 0
-            for (let cj = Math.floor(Y / CELL) - 1; cj <= Y / CELL + 1; cj++) {
-              for (let ci = Math.floor(X / CELL) - 1; ci <= X / CELL + 1; ci++) {
-                if (hash(ci + 0.3, cj) > 0.4 + 0.6 * cv) continue
-                const px = X - (ci + hash(ci, cj)) * CELL, py = Y - (cj + hash(cj, ci + 0.7)) * CELL
-                const along = (-px * sa + py * ca) / (CELL * (0.4 + 0.6 * hash(ci + 0.6, cj + 0.1))), across = Math.abs(px * ca + py * sa)
-                const width = Math.max(2 + 5 * cv * hash(ci, cj + 0.5), 0.6 * mpp) * (1 - along * along)
-                if (width > 0) depth = Math.max(depth, clamp(1 - across / width))
+          // Crevasse fields, where the ice stretches fast (over steps in its bed, and in icefalls): patches of
+          // broken ice with clean snow between them. From a distance a field is discoloured: blue-grey where
+          // the snow cover is broken, mottled with shadow, and dusty. Close up it shows its cracks.
+          const field = clamp((m[o + 2] - 0.66 + 0.5 * (noise(X / 260, Y / 260) - 0.5)) / 0.22) * clamp(hm / 30)
+          if (field > 0) {
+            const fall = field * clamp((m[o + 2] - 0.93) / 0.07)  // an icefall: cracks cross and leave blocks (seracs)
+            const far = clamp((70 - mpp) / 30), mottle = noise(X / 26, Y / 26)
+            tint(ICE, far * field * snow * (0.12 + 0.22 * mottle + 0.2 * fall))
+            tint(BROKEN, far * field * (0.1 + 0.3 * noise(X / 60 + 9, Y / 60) + 0.25 * fall) * (0.5 + 0.5 * mottle))
+            tint(DUST, far * field * clamp(2.5 * noise(X / 80 + 40, Y / 80) - 1.25) * (0.15 + 0.3 * bare + 0.15 * fall) * (0.4 + 0.9 * noise(X / 11, Y / 11)))
+            if (showFine > 0) {
+              // Cracks lie across the direction of stretching, in packs: an oval of parallel cracks 15-33 m
+              // apart, longest in its middle, that bend together. An icefall has a second set crossing the first.
+              const a = Math.atan2(m[o + 6], m[o + 5]) / 2
+              let depth = 0, lip = 0, rumple = 0
+              for (let set = 0; set < (fall > 0.3 ? 2 : 1); set++) {
+                const ca = Math.cos(a + 1.2 * set), sa = Math.sin(a + 1.2 * set), sunward = sa - ca > 0 ? 1 : -1
+                for (let cj = Math.floor(Y / PACK) - 1; cj <= Y / PACK + 1; cj++) {
+                  for (let ci = Math.floor(X / PACK) - 1; ci <= X / PACK + 1; ci++) {
+                    const id = hash(ci + 13.1 * set, cj + 0.37)
+                    if (id > 0.1 + 0.5 * field) continue  // fewer packs towards the edge of a field
+                    const px = X - (ci + hash(ci + set, cj)) * PACK, py = Y - (cj + hash(cj, ci + 0.7 + set)) * PACK
+                    const along = -px * sa + py * ca  // metres along the cracks from the middle of the pack, and across them
+                    const across = px * ca + py * sa + 9 * (noise(along / 60 + id * 91, id * 37) - 0.5)
+                    const long = PACK * (0.45 + 0.5 * hash(ci + 0.6, cj + 0.1)), wide = PACK * (0.2 + 0.3 * hash(ci + 0.2, cj + 0.9))
+                    const inside = 1 - (along / long) ** 2 - (across / wide) ** 2
+                    if (inside <= 0) continue
+                    const gap = 15 + 18 * hash(ci + 0.4, cj + 0.8), k = Math.round(across / gap)  // k: which crack of the pack
+                    const d = across - (k + 0.5 * (hash(k + 0.5, id * 71) - 0.5)) * gap           // metres from its centre line
+                    // Each crack has its own length and tapers to its ends.
+                    const reach = long * Math.sqrt(Math.max(1 - (k * gap / wide) ** 2, 0)) * (0.45 + 0.55 * hash(k + 0.1, id * 53))
+                    const taper = 1 - ((along - 0.3 * long * (hash(k + 0.7, id * 29) - 0.5)) / Math.max(reach, 1)) ** 2
+                    rumple = Math.max(rumple, inside * (0.5 + 0.5 * Math.cos(6.283 * across / gap)))  // shaded troughs between
+                    if (taper <= 0 || hash(k + 0.9, id * 43) > 0.7) continue  // and some are missing
+                    const half = (0.5 + 2 * hash(k + 0.3, id * 57) * (0.4 + 0.6 * field)) * taper  // half its width (m)
+                    const drawn = Math.max(half, 0.6 * mpp)  // never thinner than a pixel can show; fainter instead
+                    const strength = Math.min(1, half / drawn + 0.1)
+                    depth = Math.max(depth, clamp(1.2 - Math.abs(d) / drawn) * strength)
+                    lip = Math.max(lip, clamp(1 - Math.abs(d * sunward - 2 * drawn) / drawn) * strength)  // its sunlit edge
+                  }
+                }
               }
+              const open = showFine * (1 - 0.3 * snow)  // snow bridges part of a crack
+              tint(BROKEN, open * 0.3 * rumple)
+              tint(WHITE, open * 0.45 * lip)
+              tint(CRACK, open * 0.8 * depth)
             }
-            tint(DEEP, depth * (0.5 + 0.5 * cv) * showFine)
           }
           // Bergschrund: the crack where a glacier pulls away from the thin ice left on its headwall (and from
           // steep side walls), drawn where the model's thickness passes SCHRUND on steep, snow-covered ground.
+          // It opens and closes along its length, and wanders.
           const i0 = i - (col > 0), i1 = i + (col < SIZE - 1), j0 = i - (row > 0) * SIZE, j1 = i + (row < SIZE - 1) * SIZE
           const thinning = Math.hypot((m[i1 * F + 1] - m[i0 * F + 1]) / (i1 - i0), (m[j1 * F + 1] - m[j0 * F + 1]) * SIZE / (j1 - j0)) / mpp
-          const gap = Math.abs(hm - SCHRUND) / Math.max(thinning, 1e-3)  // metres from that line
-          tint(DEEP, snow * showFine * clamp((Math.hypot(gx, gy) - 0.25) / 0.2) * clamp(1.5 - gap / Math.max(3, 0.7 * mpp))
-                     * clamp(3 * noise(X / 90, Y / 90) - 0.3))
+          const gap = Math.abs(hm - SCHRUND - 14 * (noise(X / 45, Y / 45) - 0.5)) / Math.max(thinning, 1e-3)  // metres from that line
+          const schrund = snow * showFine * clamp((Math.hypot(gx, gy) - 0.3) / 0.2) * clamp(4 * noise(X / 110, Y / 110) - 1.5)
+          tint(BROKEN, schrund * 0.5 * clamp(1.5 - gap / Math.max(14, 2 * mpp)))
+          tint(CRACK, schrund * 0.85 * clamp(1.4 - gap / Math.max(2.5, 0.8 * mpp)))
           // Sun from the north-west, 40° up; the gentle relief of ice is exaggerated so it reads. Shadows on
           // snow and ice are blue: they are lit by the sky.
           const light = 0.5 + 0.5 * Math.min(1.5, sunlit(gx, gy, 2.5)) + 0.03 * (rough - 0.5), p = 4 * i
